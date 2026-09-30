@@ -78,6 +78,26 @@ def next_heading(heading, action, action_mode: ActionMode):
     raise ValueError(f"unknown action_mode {action_mode!r}")
 
 
+def heading_to_action(current: int, desired: int, action_mode: ActionMode) -> int:
+    """Action that turns ``current`` heading into ``desired`` (used by planners).
+
+    Relative mode cannot express the 180-degree reversal; asking for it is a
+    caller bug and raises.
+    """
+    if action_mode == "absolute":
+        return int(desired)
+    if action_mode != "relative":
+        raise ValueError(f"unknown action_mode {action_mode!r}")
+    diff = (int(desired) - int(current)) % 4
+    if diff == 0:
+        return STRAIGHT
+    if diff == 3:
+        return TURN_LEFT
+    if diff == 1:
+        return TURN_RIGHT
+    raise ValueError(f"heading {desired} is the reversal of {current}; not expressible as a relative action")
+
+
 def initial_cells(W: int) -> list[tuple[int, int]]:
     """Initial snake, tail -> head: length 3, horizontally centred, heading right."""
     r, c = W // 2, W // 2

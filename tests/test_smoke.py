@@ -23,6 +23,7 @@ MODULES = [
     "snake_rl.agents.dqn.agent",
     "snake_rl.train",
     "snake_rl.evaluate",
+    "snake_rl.utils",
     "snake_rl.analysis",
     "snake_rl.analysis.aggregate",
     "snake_rl.analysis.plots",

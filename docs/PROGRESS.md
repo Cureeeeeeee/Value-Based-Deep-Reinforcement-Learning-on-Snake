@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-**M2**（未开始）。M0、M1 已完成（2026-09-30）。下一步：`snake_rl/agents/baselines.py`（random / BFS 贪心 / Hamiltonian）+ `snake_rl/evaluate.py`（100 局、固定评估种子、死因分解）+ `tests/test_baselines.py`。
+**M3**（未开始）。M0、M1、M2 已完成（2026-09-30）。下一步：`snake_rl/env/vec_env.py`（(N,W,W) 批量步进、autoreset、每环境独立 RNG）+ `tests/test_vec_env.py`（与标量环境同种子同动作序列逐步等价）+ 吞吐基准（steps/s，决定后面每个 run 的时间预算）。
 
 ## 里程碑清单
 
@@ -12,7 +12,7 @@
 |---|---|---|---|
 | M0 | 仓库骨架、requirements、README、pytest 空跑、CUDA 验证 | ✅ 2026-09-30 | **可复现性数字（进报告）**：Windows 11 10.0.26200；Python 3.13.7（`.venv`）；NVIDIA driver 616.92；torch 2.11.0+cu128（`torch.version.cuda` 12.8，装自 `download.pytorch.org/whl/cu128`，PyPI 的 Windows torch 是 CPU 版）；`cuda.is_available()==True`；设备 NVIDIA GeForce RTX 5090，compute capability (12, 0) = sm_120，arch list `[sm_75, sm_80, sm_86, sm_90, sm_100, sm_120]`；1024×1024 fp32 matmul 0.060 ms/op ≈ 35.6 TFLOP/s；numpy 2.5.3 / gymnasium 1.3.0 / pygame 2.6.1（cp313 wheel 存在，无需 pygame-ce）/ pytest 9.1.1。复跑：`python scripts/check_env.py`（任一项失败 exit 1）。`pip install -e .` 已装（snake-rl 0.1.0）。`tests/test_smoke.py` 导入全部 PLAN §2 模块（未实现的模块是只含 docstring 的桩）。GitHub remote：`git@github.com:Cureeeeeeee/Value-Based-Deep-Reinforcement-Learning-on-Snake.git` |
 | M1 | `core.py` + `obs.py` + `rewards.py` + `tests/`（PLAN §3.7 全部） | ✅ 2026-09-30 | `pytest`：75 passed，0.8 s。覆盖：撞墙/撞己/吃食生长/食物不落蛇身/饥饿恰在第 H 步截断且不给 −1/追尾腾出格合法/age-2 格撞死/满盘 win/绝对模式反向=直行/种子可复现/食物均匀采样/A 的危险位与 `step` 逐动作一致（随机对局 + 手工局面）/A 食物方位与朝向 one-hot/B 8·7·4·3 平面形状与内容/同网格不同朝向观测不同（Part B 测试）/**同网格同朝向不同尾：仅年龄平面可分辨，且后继状态确实不同**（PLAN §0.2 的 Markov 论证）/R0–R3 六类事件奖励/R2 折扣望远镜不变量（终止与截断两类对局都验）/R3 非对称默认 + 对称开关 + 来回横跳净 +0.02/批量 `compute_reward` 与标量一致/gymnasium `check_env` A、B 均过 |
-| M2 | 基线 random / BFS / Hamiltonian + `evaluate.py` | ☐ | |
+| M2 | 基线 random / BFS / Hamiltonian + `evaluate.py` | ✅ 2026-09-30 | `pytest`：127 passed（+30）。验收表见下（10×10、100 局、评估种子 10000+i，`runs/baselines/*.json`）：Hamiltonian 100/100 局 `win`、97 分满分；BFS 30.6 ± 1.6，84% 撞己、16% 撞墙（被困后直行撞墙）、0 饿死；random 0.18。复跑：`python -m snake_rl.evaluate --W 10 --episodes 100`（约 30 s，Hamiltonian 占 24 s） |
 | M3 | `vec_env.py` + 等价测试 + 吞吐基准（steps/s） | ☐ | |
 | M4 | 表格 Q-learning（观测 A） | ☐ | |
 | M5 | DQN 核心（MLP on A）+ 评估协议 + 日志/checkpoint | ☐ | → Part C 可交 |
@@ -37,7 +37,27 @@
 | Gymnasium 注册 | `import snake_rl.env` 注册 `Snake-v0`（`gym.make("Snake-v0", cfg=EnvConfig(...))`） | 与课程工具链一致 |
 | RNG | 环境自持 `np.random.default_rng(seed)`；`reset(seed=None)` 延续同一流 | M3 每个向量化子环境 `default_rng(base_seed+i)` 即可逐步等价 |
 
-## 待拍板（按默认值继续，用户可推翻）
+## M2 验收表（10×10，100 局，评估种子 10000+i；由 `python -m snake_rl.evaluate` 生成，勿手改）
+
+| policy | episodes | score mean ± 95% CI | median | max | mean steps | wall | self | starve | win |
+|---|---|---|---|---|---|---|---|---|---|
+| random | 100 | 0.18 ± 0.08 | 0.0 | 2 | 23.0 | 0.98 | 0.01 | 0.01 | 0.00 |
+| bfs | 100 | 30.61 ± 1.60 | 31.0 | 58 | 255.8 | 0.16 | 0.84 | 0.00 | 0.00 |
+| hamiltonian | 100 | 97.00 ± 0.00 | 97.0 | 97 | 2409.7 | 0.00 | 0.00 | 0.00 | 1.00 |
+
+解读：Hamiltonian 是分数上界（满盘即 `win`，永不饿死因为 H ≥ W²）但每局 2410 步，是速度下界；BFS 贪心中位数 31、最高 58，死因以自困为主——"撞墙"的 16% 也是被困后无安全动作直行撞墙，语义上同属自困。RL agent 的坐标系：random ≪ 表格 Q ≈ DQN-A ≤ ? ≤ BFS < Hamiltonian。
+
+## M2 实现层面的决定
+
+| 项 | 决定 | 影响 |
+|---|---|---|
+| 策略接口 | `snake_rl.agents.Policy`：`act(obs, env) -> action`，`reset()`，`name` | 基线读 `env` 全状态，学习型 agent 只读 `obs`；同一个 `evaluate()` 通吃 |
+| BFS 时间感知 | 年龄 k 的身体格在深度 d 到达时可通过当 k ≤ d（尾巴逐步让开；到食物前不会吃到东西，所以精确） | 头被围时会沿自己尾巴逃出（测试 `test_bfs_uses_vacating_tail_to_escape_pocket`）；仍不做防自困，符合 PLAN §3.8 "贪心" |
+| BFS 无路时 | 直/左/右第一个安全动作；都不安全 → 直行 | 确定性；被困后撞墙记为 `wall` |
+| Hamiltonian 方向 | 每步走"不是脖子的那个回路邻居"，回路两个方向都可走 | W ≡ 2 (mod 4) 时初始朝向与回路方向相反（10×10 就是），自动反向走，不需要改初始状态 |
+| 评估种子 | 第 i 局 `reset(seed=eval_seed+i)`，默认 `eval_seed=10000`（远离训练种子） | 所有 agent 与基线在同一组棋盘上比较 |
+| 评估输出 | `EvalResult` → JSON：env config、seed、git hash（`+dirty` 标记）、逐局记录、summary（均值、95% CI 正态近似、中位数、最大、步数、死因比例） | 表格由文件重生成；跨种子 CI 留给 M10 `analysis/` |
+| `snake_rl/utils.py` | `git_hash()` | 训练日志（M5）复用 |
 
 | 项 | 默认 | 理由 |
 |---|---|---|
@@ -65,4 +85,5 @@
 - 2026-09-15：项目文件夹建立；`PLAN.md`、`CLAUDE.md`、`docs/` 就位。代码未开始。
 - 2026-09-30：M0 完成。`git init`（main）+ remote；`.venv`（`py -3.13`）；torch 2.11.0+cu128 装自 `download.pytorch.org/whl/cu128`，其余依赖走 `requirements.txt`（numpy 2.5.3 / gymnasium 1.3.0 / pygame 2.6.1 / pytest 9.1.1）。骨架：`snake_rl/{env,agents/dqn,analysis,gui}`、`tests/`、`configs/`、`scripts/`、`notebooks/`、`pyproject.toml`（pytest `pythonpath=.`）。注意：本机 PATH 上默认 `python` 是 3.11.9，建 venv 必须用 `py -3.13`。
 - 2026-09-30（M0 补齐，用户六步规格）：`requirements.txt` 去掉 torch（README 写明安装顺序 venv → torch cu128 → requirements → `pip install -e .` → `scripts/check_env.py`）；`check_setup.py` 改为 `check_env.py`（加 matmul 计时、pygame 导入、失败 exit 1）；按 PLAN §2 建 12 个桩模块 + `tests/test_smoke.py`；可复现性数字记入 M0 行。`notebooks/results.ipynb` 未建桩（M10 再建）。
+- 2026-09-30：M2 完成。`agents/__init__.py`（Policy 协议）、`agents/baselines.py`、`evaluate.py`（含 CLI）、`utils.py`、`common.heading_to_action`、`tests/test_baselines.py`（30 测试）。验收表已录入。
 - 2026-09-30：M1 完成。`snake_rl/env/{common,core,obs,rewards}.py` + `tests/{helpers,test_env,test_obs,test_rewards}.py`，75 测试全绿。实现决定见上表。push 由用户在自己终端做。**remote 已改为 HTTPS**（`https://github.com/Cureeeeeeee/Value-Based-Deep-Reinforcement-Learning-on-Snake.git`），凭据由 `gh auth setup-git` 提供（`gh` 已登录 Cureeeeeeee，token 含 `repo`）；原因是本机 `~/.ssh/id_ed25519` 没有注册到 GitHub 账号（用户终端同样 publickey 拒绝），不是沙箱问题。

@@ -50,11 +50,12 @@ snake_rl/
     obs.py       observation A (11 features) / B (multi-plane grid), written once
     rewards.py   reward variants R0-R3, written once
   agents/
-    baselines.py random / BFS greedy / Hamiltonian                                  [M2]
+    baselines.py random / BFS greedy (time-aware) / Hamiltonian cycle
     tabular_q.py tabular Q-learning on observation A                                [M4]
     dqn/         networks.py, replay.py, agent.py (double / dueling switches)       [M5-M7]
   train.py       config-driven training, writes runs/<exp>/<seed>/                  [M5]
-  evaluate.py    greedy evaluation protocol with death-cause breakdown              [M2]
+  evaluate.py    greedy evaluation protocol with death-cause breakdown (+ CLI)
+  utils.py       git hash and other reproducibility helpers
   analysis/      aggregate.py (cross-seed CI), plots.py                             [M10]
   gui/app.py     pygame: human play / agent play with live Q-values / replay        [M9]
 tests/           pytest; the scalar-vs-vectorised equivalence test is the regression gate
@@ -85,3 +86,17 @@ env = SnakeEnv(EnvConfig(W=10, obs=ObsConfig(kind="B"), reward=RewardConfig(vari
 obs, info = env.reset(seed=0)
 obs, reward, terminated, truncated, info = env.step(0)   # info: cause, score, length, steps
 ```
+
+## Baselines and evaluation
+
+```powershell
+python -m snake_rl.evaluate --policy random bfs hamiltonian --W 10 --episodes 100
+```
+
+plays 100 greedy episodes per player on fixed evaluation seeds (episode `i`
+uses `10000 + i`, the same boards for every agent), writes
+`runs/baselines/<policy>_W10_relative.json` (config, seed, git hash, per-episode
+records, summary) and prints a markdown table with mean score, 95 % CI and the
+death-cause breakdown. On 10x10 the Hamiltonian player wins every game (97),
+BFS greedy scores about 31 and dies mostly by trapping itself, random scores
+about 0.2.
