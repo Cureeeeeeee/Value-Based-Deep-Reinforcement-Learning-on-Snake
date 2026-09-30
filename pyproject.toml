@@ -23,5 +23,4 @@ include = ["snake_rl*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-q"
 filterwarnings = ["error::DeprecationWarning:snake_rl.*"]

@@ -14,36 +14,52 @@ state representations (11 binary features vs multi-plane grid), reward designs
 Hamiltonian cycle). Every configuration runs with 5 seeds and is reported with
 confidence intervals and a death-cause breakdown.
 
-## Setup (Windows 11, Python 3.13, RTX 5090)
+## Installation (Windows 11, Python 3.13, RTX 5090)
+
+Order matters: the PyPI Windows wheel of `torch` is CPU-only, so torch is
+installed first from the CUDA 12.8 index and is deliberately absent from
+`requirements.txt`.
 
 ```powershell
 py -3.13 -m venv .venv
 .venv\Scripts\activate
-pip install torch --index-url https://download.pytorch.org/whl/cu128   # Blackwell needs torch >= 2.7
+python -m pip install --upgrade pip
+pip install torch --index-url https://download.pytorch.org/whl/cu128   # Blackwell (sm_120) needs torch >= 2.7
 pip install -r requirements.txt
-python -c "import torch; print(torch.__version__, torch.cuda.is_available())"   # must print True
-pytest
+pip install -e .
+python scripts/check_env.py     # versions, CUDA device, GPU matmul timing; exit 1 on any failure
+pytest -q
 ```
 
+Verified 2026-09-30: Python 3.13.7, torch 2.11.0+cu128, NVIDIA driver 616.92,
+RTX 5090 reported as compute capability (12, 0). `pygame` 2.6.1 ships a
+Python 3.13 wheel; if a future Python version lacks one, substitute
+`pygame-ce` (same API).
+
 The environment itself only needs `numpy` and `gymnasium`; a CPU-only `torch`
-is enough for small configurations.
+is enough for small configurations and for Colab.
 
 ## Layout
 
 ```
 snake_rl/
   env/
-    common.py    rules shared by both environments (headings, step order helpers, food sampling)
+    common.py    rules shared by both environments (headings, actions, food sampling, body_age helpers)
     core.py      scalar reference environment (gymnasium.Env), readability first
     vec_env.py   vectorised (N, W, W) environment for training, throughput first   [M3]
     obs.py       observation A (11 features) / B (multi-plane grid), written once
     rewards.py   reward variants R0-R3, written once
-  agents/        baselines, tabular Q-learning, DQN (networks / replay / agent)    [M2+]
-  analysis/      aggregation over seeds, plots                                      [M10]
-  gui/           pygame app: human play / agent play with live Q-values / replay    [M9]
+  agents/
+    baselines.py random / BFS greedy / Hamiltonian                                  [M2]
+    tabular_q.py tabular Q-learning on observation A                                [M4]
+    dqn/         networks.py, replay.py, agent.py (double / dueling switches)       [M5-M7]
+  train.py       config-driven training, writes runs/<exp>/<seed>/                  [M5]
+  evaluate.py    greedy evaluation protocol with death-cause breakdown              [M2]
+  analysis/      aggregate.py (cross-seed CI), plots.py                             [M10]
+  gui/app.py     pygame: human play / agent play with live Q-values / replay        [M9]
 tests/           pytest; the scalar-vs-vectorised equivalence test is the regression gate
 configs/         one yaml per experiment
-scripts/         batch runners (seeds x configs)
+scripts/         check_env.py, run_matrix.py (seeds x configs batch runner)
 notebooks/       Colab notebook regenerating the main figures from logs/checkpoints
 runs/            training outputs (not in git)
 ```

@@ -1,7 +1,7 @@
-# Install torch FIRST from the CUDA 12.8 index (RTX 5090 / Blackwell sm_120 needs torch >= 2.7):
+# torch is deliberately NOT listed here: the PyPI Windows wheel is CPU-only.
+# Install it first from the CUDA 12.8 index (RTX 5090 / Blackwell sm_120 needs torch >= 2.7):
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128
 # then: pip install -r requirements.txt
-torch>=2.7
 numpy>=2.0
 gymnasium>=1.0
 pygame>=2.6

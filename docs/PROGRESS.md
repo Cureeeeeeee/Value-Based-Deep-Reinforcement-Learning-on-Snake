@@ -10,7 +10,7 @@
 
 | # | 内容 | 状态 | 验收结果 / 备注 |
 |---|---|---|---|
-| M0 | 仓库骨架、requirements、README、pytest 空跑、CUDA 验证 | ✅ 2026-09-30 | `.venv` Python 3.13.7；torch 2.11.0+cu128，`cuda.is_available()==True`，RTX 5090 识别为 sm_120（arch list 含 sm_120），GPU matmul 正常。复跑：`python scripts/check_setup.py`。GitHub remote：`git@github.com:Cureeeeeeee/Value-Based-Deep-Reinforcement-Learning-on-Snake.git` |
+| M0 | 仓库骨架、requirements、README、pytest 空跑、CUDA 验证 | ✅ 2026-09-30 | **可复现性数字（进报告）**：Windows 11 10.0.26200；Python 3.13.7（`.venv`）；NVIDIA driver 616.92；torch 2.11.0+cu128（`torch.version.cuda` 12.8，装自 `download.pytorch.org/whl/cu128`，PyPI 的 Windows torch 是 CPU 版）；`cuda.is_available()==True`；设备 NVIDIA GeForce RTX 5090，compute capability (12, 0) = sm_120，arch list `[sm_75, sm_80, sm_86, sm_90, sm_100, sm_120]`；1024×1024 fp32 matmul 0.060 ms/op ≈ 35.6 TFLOP/s；numpy 2.5.3 / gymnasium 1.3.0 / pygame 2.6.1（cp313 wheel 存在，无需 pygame-ce）/ pytest 9.1.1。复跑：`python scripts/check_env.py`（任一项失败 exit 1）。`pip install -e .` 已装（snake-rl 0.1.0）。`tests/test_smoke.py` 导入全部 PLAN §2 模块（未实现的模块是只含 docstring 的桩）。GitHub remote：`git@github.com:Cureeeeeeee/Value-Based-Deep-Reinforcement-Learning-on-Snake.git` |
 | M1 | `core.py` + `obs.py` + `rewards.py` + `tests/`（PLAN §3.7 全部） | ✅ 2026-09-30 | `pytest`：75 passed，0.8 s。覆盖：撞墙/撞己/吃食生长/食物不落蛇身/饥饿恰在第 H 步截断且不给 −1/追尾腾出格合法/age-2 格撞死/满盘 win/绝对模式反向=直行/种子可复现/食物均匀采样/A 的危险位与 `step` 逐动作一致（随机对局 + 手工局面）/A 食物方位与朝向 one-hot/B 8·7·4·3 平面形状与内容/同网格不同朝向观测不同（Part B 测试）/**同网格同朝向不同尾：仅年龄平面可分辨，且后继状态确实不同**（PLAN §0.2 的 Markov 论证）/R0–R3 六类事件奖励/R2 折扣望远镜不变量（终止与截断两类对局都验）/R3 非对称默认 + 对称开关 + 来回横跳净 +0.02/批量 `compute_reward` 与标量一致/gymnasium `check_env` A、B 均过 |
 | M2 | 基线 random / BFS / Hamiltonian + `evaluate.py` | ☐ | |
 | M3 | `vec_env.py` + 等价测试 + 吞吐基准（steps/s） | ☐ | |
@@ -63,5 +63,6 @@
 ## 会话日志
 
 - 2026-09-15：项目文件夹建立；`PLAN.md`、`CLAUDE.md`、`docs/` 就位。代码未开始。
-- 2026-09-30：M0 完成。`git init`（main）+ remote；`.venv`（`py -3.13`）；torch 2.11.0+cu128 装自 `download.pytorch.org/whl/cu128`，其余依赖走 `requirements.txt`（numpy 2.5.3 / gymnasium 1.3.0 / pygame 2.6.1 / pytest 9.1.1）。骨架：`snake_rl/{env,agents/dqn,analysis,gui}`、`tests/`、`configs/`、`scripts/check_setup.py`、`notebooks/`、`pyproject.toml`（pytest `pythonpath=.`）。注意：本机 PATH 上默认 `python` 是 3.11.9，建 venv 必须用 `py -3.13`。
+- 2026-09-30：M0 完成。`git init`（main）+ remote；`.venv`（`py -3.13`）；torch 2.11.0+cu128 装自 `download.pytorch.org/whl/cu128`，其余依赖走 `requirements.txt`（numpy 2.5.3 / gymnasium 1.3.0 / pygame 2.6.1 / pytest 9.1.1）。骨架：`snake_rl/{env,agents/dqn,analysis,gui}`、`tests/`、`configs/`、`scripts/`、`notebooks/`、`pyproject.toml`（pytest `pythonpath=.`）。注意：本机 PATH 上默认 `python` 是 3.11.9，建 venv 必须用 `py -3.13`。
+- 2026-09-30（M0 补齐，用户六步规格）：`requirements.txt` 去掉 torch（README 写明安装顺序 venv → torch cu128 → requirements → `pip install -e .` → `scripts/check_env.py`）；`check_setup.py` 改为 `check_env.py`（加 matmul 计时、pygame 导入、失败 exit 1）；按 PLAN §2 建 12 个桩模块 + `tests/test_smoke.py`；可复现性数字记入 M0 行。`notebooks/results.ipynb` 未建桩（M10 再建）。
 - 2026-09-30：M1 完成。`snake_rl/env/{common,core,obs,rewards}.py` + `tests/{helpers,test_env,test_obs,test_rewards}.py`，75 测试全绿。实现决定见上表。未 push（SSH 从 Claude Code 的 shell 到 GitHub 报 publickey 拒绝，push 由用户在自己终端做）。
