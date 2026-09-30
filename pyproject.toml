@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snake-rl"
+version = "0.1.0"
+description = "Value-based deep RL on Snake: a controlled study of state representation, reward design and DQN stabilisation (UTS 43008 A3, project 48)"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.7",
+    "numpy>=2.0",
+    "gymnasium>=1.0",
+    "pygame>=2.6",
+    "matplotlib>=3.9",
+    "pandas>=2.2",
+    "pyyaml>=6.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["snake_rl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning:snake_rl.*"]
