@@ -26,6 +26,28 @@ takes the default of its dataclass (``EnvConfig``, ``ObsConfig``,
       eval_episodes: 100
       eval_seed: 10000
 
+``agent.kind: dqn`` (M5) selects ``DQNConfig`` (``snake_rl/agents/dqn/config.py``,
+which documents every field); its ``agent`` block, with the defaults::
+
+    agent:
+      kind: dqn
+      gamma: 0.99
+      lr: 2.5e-4                     # Adam
+      batch_size: 256
+      buffer_size: 100000            # transitions in the replay buffer
+      learning_starts: 10000         # env steps collected before the first gradient step
+      grad_steps_per_vec_step: null  # null -> max(1, n_envs // 4)
+      target_update_every: 1000      # gradient steps between two hard target syncs
+      grad_clip: 10.0                # max global gradient norm
+      eps_start: 1.0
+      eps_end: 0.05
+      eps_decay_fraction: 0.2
+      hidden: [256, 256]             # [] = linear Q-function
+      double: false                  # Double DQN target (M7)
+      keep_checkpoints: true         # weights-only checkpoint at every evaluation
+      device: auto                   # auto | cpu | cuda
+      torch_threads: null            # null -> torch's own setting
+
 ``load_config(path, overrides)`` reads the file, applies the
 ``dotted.key=value`` overrides (value parsed as YAML, e.g. ``agent.alpha=0.2``,
 ``env.reward.variant=R1``, ``exp=my_name``) and validates the result.
@@ -50,6 +72,13 @@ misspelt reward variant fails only at the first ``step``). Every error is a
   multiple of ``n_envs`` and ``total_env_steps`` a positive multiple of
   ``eval_every``;
 * ``tabular_q`` needs observation A (the table is indexed by the 11 bits);
+* ``dqn``: ``lr > 0``; ``batch_size >= 1``; ``buffer_size >= batch_size``;
+  ``batch_size <= learning_starts <= train.total_env_steps``;
+  ``grad_steps_per_vec_step`` and ``torch_threads`` null or ``>= 1``;
+  ``target_update_every >= 1``; ``grad_clip > 0``; ``hidden`` a list of
+  positive integers (possibly empty); ``device`` one of auto / cpu / cuda;
+  gamma and the epsilon schedule as for ``tabular_q``; observation A only in
+  M5 (the CNN for observation B arrives in M6);
 * reward R2 needs ``env.reward.gamma == agent.gamma``: potential-based shaping
   (Ng et al. 1999) preserves the optimal policy only for the discount the
   agent actually uses;
@@ -75,6 +104,7 @@ from typing import Any, Sequence, get_args
 
 import yaml
 
+from snake_rl.agents.dqn.config import DQNConfig  # torch-free: validating a file never imports torch
 from snake_rl.agents.tabular_q import TabularQConfig
 from snake_rl.env.common import ActionMode
 from snake_rl.env.core import EnvConfig
@@ -89,6 +119,7 @@ MAX_N_ENVS = ENV_SEED_SPACING
 ACTION_MODES: tuple[str, ...] = get_args(ActionMode)
 OBS_KINDS: tuple[str, ...] = ("A", "B")
 REWARD_VARIANTS: tuple[str, ...] = get_args(RewardVariant)
+DEVICES: tuple[str, ...] = ("auto", "cpu", "cuda")
 
 
 @dataclass(frozen=True)
@@ -117,10 +148,10 @@ class ExperimentConfig:
     #: Experiment name = directory under the runs dir.
     exp: str
     env: EnvConfig
-    #: ``"tabular_q"`` now; ``"dqn"`` is added in M5.
+    #: ``"tabular_q"`` or ``"dqn"``.
     agent_kind: str
     #: Config dataclass of that agent kind.
-    agent: TabularQConfig
+    agent: TabularQConfig | DQNConfig
     train: TrainConfig
 
 
@@ -140,11 +171,14 @@ def config_to_dict(cfg: ExperimentConfig) -> dict[str, Any]:
     """Nested plain dict in the YAML layout, every field included.
 
     ``config_from_dict(config_to_dict(cfg)) == cfg`` for every valid config.
+    A tuple field (``hidden`` of ``DQNConfig``) is written as a list, the form
+    YAML and JSON give back.
     """
+    agent = {name: list(value) if isinstance(value, tuple) else value for name, value in asdict(cfg.agent).items()}
     return {
         "exp": cfg.exp,
         "env": asdict(cfg.env),
-        "agent": {"kind": cfg.agent_kind, **asdict(cfg.agent)},
+        "agent": {"kind": cfg.agent_kind, **agent},
         "train": asdict(cfg.train),
     }
 
@@ -164,7 +198,11 @@ def config_from_dict(raw: Mapping[str, Any]) -> ExperimentConfig:
     if not isinstance(kind, str) or kind not in _AGENT_KINDS:
         raise ValueError(f"agent.kind must be one of: {', '.join(_AGENT_KINDS)}; got {kind!r}")
     config_type, parse_agent = _AGENT_KINDS[kind]
-    agent = parse_agent(top.section("agent", ("kind", *_field_names(config_type))))
+    try:
+        agent_section = top.section("agent", ("kind", *_field_names(config_type)))
+    except ValueError as err:  # an unknown key: the keys that exist depend on the kind, so say which one it is
+        raise ValueError(f"{err} for agent.kind {kind}") from None
+    agent = parse_agent(agent_section)
 
     train = _train_config(top.section("train", _field_names(TrainConfig)))
     cfg = ExperimentConfig(exp=exp, env=env, agent_kind=kind, agent=agent, train=train)
@@ -270,6 +308,13 @@ class _Section:
         value = self.raw.get(name, default)
         if not _is_int(value):
             raise ValueError(f"{self.key(name)} must be an integer, got {value!r}")
+        return value
+
+    def optional_integer(self, name: str, default: int | None) -> int | None:
+        """An integer or null (``None``)."""
+        value = self.raw.get(name, default)
+        if value is not None and not _is_int(value):
+            raise ValueError(f"{self.key(name)} must be null or an integer, got {value!r}")
         return value
 
     def number(self, name: str, default: float) -> float:
@@ -384,10 +429,72 @@ def _train_config(s: _Section) -> TrainConfig:
     return cfg
 
 
+def _dqn_config(s: _Section) -> DQNConfig:
+    default = DQNConfig()
+    hidden = s.raw.get("hidden", list(default.hidden))
+    _require(
+        isinstance(hidden, (list, tuple)) and all(_is_int(width) and width >= 1 for width in hidden),
+        f"{s.key('hidden')} must be a list of positive integers (possibly empty: a linear Q-function), got {hidden!r}",
+    )
+    cfg = DQNConfig(
+        gamma=s.number("gamma", default.gamma),
+        lr=s.number("lr", default.lr),
+        batch_size=s.integer("batch_size", default.batch_size),
+        buffer_size=s.integer("buffer_size", default.buffer_size),
+        learning_starts=s.integer("learning_starts", default.learning_starts),
+        grad_steps_per_vec_step=s.optional_integer("grad_steps_per_vec_step", default.grad_steps_per_vec_step),
+        target_update_every=s.integer("target_update_every", default.target_update_every),
+        grad_clip=s.number("grad_clip", default.grad_clip),
+        eps_start=s.number("eps_start", default.eps_start),
+        eps_end=s.number("eps_end", default.eps_end),
+        eps_decay_fraction=s.number("eps_decay_fraction", default.eps_decay_fraction),
+        hidden=tuple(hidden),
+        double=s.boolean("double", default.double),
+        keep_checkpoints=s.boolean("keep_checkpoints", default.keep_checkpoints),
+        device=s.choice("device", default.device, DEVICES),
+        torch_threads=s.optional_integer("torch_threads", default.torch_threads),
+    )
+    _require(0 <= cfg.gamma <= 1, f"{s.key('gamma')} must be in [0, 1], got {cfg.gamma}")
+    _require(cfg.lr > 0, f"{s.key('lr')} must be positive, got {cfg.lr}")
+    _require(cfg.batch_size >= 1, f"{s.key('batch_size')} must be at least 1, got {cfg.batch_size}")
+    _require(
+        cfg.buffer_size >= cfg.batch_size,
+        f"{s.key('buffer_size')} ({cfg.buffer_size}) must be at least {s.key('batch_size')} ({cfg.batch_size})",
+    )
+    _require(
+        cfg.learning_starts >= cfg.batch_size,
+        f"{s.key('learning_starts')} ({cfg.learning_starts}) must be at least {s.key('batch_size')} "
+        f"({cfg.batch_size}): the first gradient step needs a batch of transitions",
+    )
+    _require(
+        cfg.grad_steps_per_vec_step is None or cfg.grad_steps_per_vec_step >= 1,
+        f"{s.key('grad_steps_per_vec_step')} must be null or at least 1, got {cfg.grad_steps_per_vec_step}",
+    )
+    _require(
+        cfg.target_update_every >= 1,
+        f"{s.key('target_update_every')} must be at least 1, got {cfg.target_update_every}",
+    )
+    _require(cfg.grad_clip > 0, f"{s.key('grad_clip')} must be positive, got {cfg.grad_clip}")
+    _require(
+        0 <= cfg.eps_end <= cfg.eps_start <= 1,
+        f"need 0 <= {s.key('eps_end')} <= {s.key('eps_start')} <= 1, "
+        f"got eps_end {cfg.eps_end} and eps_start {cfg.eps_start}",
+    )
+    _require(
+        0 <= cfg.eps_decay_fraction <= 1,
+        f"{s.key('eps_decay_fraction')} must be in [0, 1], got {cfg.eps_decay_fraction}",
+    )
+    _require(
+        cfg.torch_threads is None or cfg.torch_threads >= 1,
+        f"{s.key('torch_threads')} must be null or at least 1, got {cfg.torch_threads}",
+    )
+    return cfg
+
+
 #: ``agent.kind`` -> (config dataclass, parser of the ``agent`` section).
-#: M5 registers ``"dqn"`` here.
 _AGENT_KINDS: dict[str, tuple[type, Callable[[_Section], Any]]] = {
     "tabular_q": (TabularQConfig, _tabular_q_config),
+    "dqn": (DQNConfig, _dqn_config),
 }
 
 
@@ -399,6 +506,17 @@ def _check_combination(cfg: ExperimentConfig) -> None:
             env.obs.kind == "A",
             f"env.obs.kind must be A for agent.kind tabular_q (the table is indexed by the 11 binary "
             f"features), got {env.obs.kind!r}",
+        )
+    if cfg.agent_kind == "dqn":
+        _require(
+            env.obs.kind == "A",
+            f"env.obs.kind must be A for agent.kind dqn in M5 (the CNN for observation B arrives in M6), "
+            f"got {env.obs.kind!r}",
+        )
+        _require(
+            agent.learning_starts <= cfg.train.total_env_steps,
+            f"agent.learning_starts ({agent.learning_starts}) must not exceed train.total_env_steps "
+            f"({cfg.train.total_env_steps}): the run would end before the first gradient step",
         )
     if env.reward.variant == "R2":
         _require(

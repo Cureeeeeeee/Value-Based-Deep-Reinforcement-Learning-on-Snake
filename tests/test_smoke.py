@@ -19,6 +19,7 @@ MODULES = [
     "snake_rl.agents.schedules",
     "snake_rl.agents.tabular_q",
     "snake_rl.agents.dqn",
+    "snake_rl.agents.dqn.config",
     "snake_rl.agents.dqn.networks",
     "snake_rl.agents.dqn.replay",
     "snake_rl.agents.dqn.agent",

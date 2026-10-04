@@ -38,15 +38,27 @@ episode has the same weight, also when seeds have different episode counts).
 All episode statistics are recomputed from the per-episode records; the
 ``summary`` block stored in the JSON files is never read.
 
+Last-k summary (optional, ``last_k`` / ``--last-k K``). The final evaluation
+is ONE checkpoint per seed, and the greedy policy of a DQN still moves from
+one evaluation to the next at the end of training. With ``last_k`` every seed
+additionally contributes the mean of ``eval_mean_score`` over the LAST ``k``
+rows of its ``metrics.csv`` (file order), and the table gains a column with
+the mean and the Student-t interval over those per-seed numbers. The seed is
+still the unit of replication: averaging k evaluations of one seed reduces
+the checkpoint-to-checkpoint noise inside that seed, it does not create k
+replicates. Baselines have no evaluation curve; their cell is ``n/a``.
+
 CLI::
 
     python -m snake_rl.analysis.aggregate [--baseline FILE ...] [--exp DIR ...] [--out FILE.md] [--curves-dir DIR]
+                                          [--last-k K]
 
 prints the results table (baselines first, in the order given, then
 experiments), ``--out`` also writes it to a file and ``--curves-dir`` writes
 ``<exp name>_curve.csv`` per experiment, e.g. ``--baseline
 runs/baselines/bfs_W10_relative.json --exp runs/tabular_q_W10 --out
-runs/tables/part_c.md --curves-dir runs/tables``.
+runs/tables/part_c.md --curves-dir runs/tables``. Without ``--last-k`` the
+table has no last-k column.
 """
 
 from __future__ import annotations
@@ -228,7 +240,31 @@ def _require_one_configuration(exp_dir: Path, runs: Sequence[RunResult]) -> None
 
 
 # ----------------------------------------------------------------- summaries
-def _summarise_runs(runs: Sequence[RunResult], label: str) -> dict[str, Any]:
+def _check_last_k(last_k: int) -> None:
+    if isinstance(last_k, bool) or not isinstance(last_k, (int, np.integer)) or last_k < 1:
+        raise ValueError(f"last_k must be an integer >= 1, got {last_k!r}")
+
+
+def _last_k_summary(runs: Sequence[RunResult], last_k: int) -> dict[str, Any]:
+    """The keys ``last_k`` adds to a summary row (see :func:`summarise_experiment`)."""
+    _check_last_k(last_k)
+    per_seed = []
+    for r in runs:
+        path = r.run_dir / METRICS_FILE
+        if "eval_mean_score" not in r.metrics.columns:
+            raise ValueError(f"{path}: missing column(s) ['eval_mean_score']")
+        scores = r.metrics["eval_mean_score"].to_numpy(dtype=np.float64)
+        if scores.size < last_k:
+            raise ValueError(f"{path}: {scores.size} evaluation row(s), fewer than last_k = {last_k}")
+        tail = scores[-last_k:]  # file order: the training loop appends one row per evaluation
+        if not np.isfinite(tail).all():
+            raise ValueError(f"{path}: eval_mean_score is not a finite number in the last {last_k} row(s)")
+        per_seed.append(float(tail.mean()))
+    mean, ci = mean_ci95(per_seed)  # the seed is the unit of replication, as for the final evaluation
+    return {"last_k": int(last_k), "lastk_mean_score": mean, "lastk_ci95": ci, "lastk_per_seed": per_seed}
+
+
+def _summarise_runs(runs: Sequence[RunResult], label: str, last_k: int | None = None) -> dict[str, Any]:
     finals = [r.final for r in runs]
     per_seed_means = [f.mean_score for f in finals]
     mean, ci = mean_ci95(per_seed_means)  # the seed is the unit of replication
@@ -238,7 +274,7 @@ def _summarise_runs(runs: Sequence[RunResult], label: str) -> dict[str, Any]:
     pooled = EvalResult(
         policy=label, env=finals[0].env, seed=finals[0].seed, episodes=[e for f in finals for e in f.episodes]
     ).summary()
-    return {
+    summary = {
         "label": label,
         "n_seeds": len(runs),
         "seeds": [r.seed for r in runs],
@@ -253,9 +289,14 @@ def _summarise_runs(runs: Sequence[RunResult], label: str) -> dict[str, Any]:
         "mean_steps": pooled["mean_steps"],
         "cause_fractions": pooled["cause_fractions"],
     }
+    if last_k is not None:
+        summary.update(_last_k_summary(runs, last_k))
+    return summary
 
 
-def summarise_experiment(exp_dir: str | Path, label: str | None = None) -> dict[str, Any]:
+def summarise_experiment(
+    exp_dir: str | Path, label: str | None = None, last_k: int | None = None
+) -> dict[str, Any]:
     """Across-seed summary of the final evaluation of one experiment.
 
     ``mean_score`` is the mean over seeds of the per-seed mean score and
@@ -263,9 +304,18 @@ def summarise_experiment(exp_dir: str | Path, label: str | None = None) -> dict[
     seed). ``n_episodes`` is the episode count per seed, or ``None`` if the
     seeds disagree (``per_seed_n_episodes`` always lists them). Median, max,
     mean steps and cause fractions are over all pooled episodes.
+
+    With ``last_k`` the dict gains four keys: ``last_k``; ``lastk_per_seed``,
+    each seed's mean of ``eval_mean_score`` over the last ``last_k`` rows of
+    its ``metrics.csv`` (seed order); ``lastk_mean_score``, the mean of those
+    per-seed numbers; ``lastk_ci95``, their Student-t half-width (nan for one
+    seed). ``ValueError`` if ``last_k < 1`` or a run has fewer rows. Without
+    ``last_k`` the dict is exactly the one described above.
     """
+    if last_k is not None:
+        _check_last_k(last_k)  # before any file is read
     exp_dir = Path(exp_dir)
-    return _summarise_runs(load_runs(exp_dir), label if label is not None else exp_dir.resolve().name)
+    return _summarise_runs(load_runs(exp_dir), label if label is not None else exp_dir.resolve().name, last_k)
 
 
 def summarise_baseline(json_path: str | Path, label: str | None = None) -> dict[str, Any]:
@@ -303,13 +353,24 @@ def results_table(rows: Sequence[dict[str, Any]]) -> str:
 
     A CI that does not exist (one seed) is printed as ``n/a``, never as a
     number. Seeds with different episode counts are printed as ``min-max``.
+
+    If at least one row carries ``last_k`` (``summarise_experiment(...,
+    last_k=k)``), a last column ``last-<k> evals mean +- 95% CI`` is appended;
+    rows without it (baselines) show ``n/a`` there. Rows with different ``k``
+    in one table are a ``ValueError``. Without any such row the table is the
+    twelve-column table, unchanged.
     """
+    last_ks = sorted({int(r["last_k"]) for r in rows if r.get("last_k") is not None})
+    if len(last_ks) > 1:
+        raise ValueError(f"rows carry different last_k values {last_ks}; one table has one last-k column")
     head = (
         "| label | seeds | episodes | score mean +- 95% CI | CI over | median | max | mean steps | "
         + " | ".join(CAUSES)
         + " |"
     )
-    lines = [head, "|" + "---|" * (8 + len(CAUSES))]
+    if last_ks:
+        head += f" last-{last_ks[0]} evals mean +- 95% CI |"
+    lines = [head, "|" + "---|" * (8 + len(CAUSES) + len(last_ks))]
     for r in rows:
         ci = r["ci95"]
         ci_text = f"{ci:.2f}" if ci is not None and math.isfinite(ci) else "n/a"
@@ -319,10 +380,18 @@ def results_table(rows: Sequence[dict[str, Any]]) -> str:
             episodes = f"{min(r['per_seed_n_episodes'])}-{max(r['per_seed_n_episodes'])}"
         frac = " | ".join(f"{r['cause_fractions'][c]:.2f}" for c in CAUSES)
         label = str(r["label"]).replace("|", "\\|")
-        lines.append(
+        line = (
             f"| {label} | {r['n_seeds']} | {episodes} | {r['mean_score']:.2f} +- {ci_text} | {r['ci_kind']} | "
             f"{r['median_score']:.1f} | {r['max_score']} | {r['mean_steps']:.1f} | {frac} |"
         )
+        if last_ks:
+            if r.get("last_k") is None:
+                line += " n/a |"
+            else:
+                k_ci = r["lastk_ci95"]
+                k_ci_text = f"{k_ci:.2f}" if k_ci is not None and math.isfinite(k_ci) else "n/a"
+                line += f" {r['lastk_mean_score']:.2f} +- {k_ci_text} |"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -382,16 +451,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                    help="experiment directories <runs_dir>/<exp> holding one sub-directory per seed")
     p.add_argument("--out", metavar="FILE.md", help="also write the table to this file")
     p.add_argument("--curves-dir", metavar="DIR", help="write <exp name>_curve.csv per experiment")
+    p.add_argument("--last-k", type=int, default=None, metavar="K",
+                   help="add a column: mean +- 95%% CI over seeds of each seed's mean score over its last K "
+                        "evaluations (default: off)")
     args = p.parse_args(argv)
     if not args.baseline and not args.exp:
         p.error("nothing to aggregate: give --baseline FILE and/or --exp DIR")
+    if args.last_k is not None and args.last_k < 1:
+        p.error(f"--last-k must be >= 1, got {args.last_k}")
 
     rows = [summarise_baseline(f) for f in args.baseline]
     curves: dict[str, pd.DataFrame] = {}
     for d in args.exp:
         name = Path(d).resolve().name
         runs = load_runs(d)
-        rows.append(_summarise_runs(runs, name))
+        rows.append(_summarise_runs(runs, name, args.last_k))
         if args.curves_dir:
             if name in curves:
                 p.error(f"two experiments are named {name!r}: their curve files would overwrite each other")

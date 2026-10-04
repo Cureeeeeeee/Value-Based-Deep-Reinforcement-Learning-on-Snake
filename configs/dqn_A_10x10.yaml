@@ -1,0 +1,54 @@
+# DQN (MLP 11 -> 256 -> 256 -> 3, uniform replay, target network) on observation A
+# (11 binary features), 10x10 board, reward R0, relative actions (PLAN.md milestone M5).
+# The main board of the project: same board, features, reward and evaluation boards as
+# configs/tabular_q_10x10.yaml, so the two are compared like for like (M5 acceptance:
+# DQN on observation A at the level of tabular Q-learning on the same features).
+#
+# gamma is 0.9, the value of the tabular reference (chosen on the 8x8 sweep of M4, see
+# docs/PROGRESS.md); Part B's initial value was 0.99. device / torch_threads: on this
+# 2 x 256 MLP one gradient step is dominated by per-call overhead, and the CPU is about
+# three times faster per step than the GPU (M5 measurement, docs/PROGRESS.md); CPU runs
+# are also bit-for-bit reproducible. eval_every is 12,800 because the greedy score
+# reaches its plateau within the first 50,000 steps. Everything else in the agent block
+# is the DQNConfig default (snake_rl/agents/dqn/config.py), written out.
+#
+# Run one seed (writes runs/dqn_A_W10/<seed>/: config.yaml, metrics.csv, checkpoints/,
+# model.pt, final_eval.json; 253,504 gradient steps):
+#   python -m snake_rl.train --config configs/dqn_A_10x10.yaml --seed 0
+# Five seeds (the project rule), a few processes at a time:
+#   python scripts/run_matrix.py --config configs/dqn_A_10x10.yaml --seeds 0 1 2 3 4 --jobs 5
+# Change single values without editing this file. --set needs a new --exp: one experiment
+# name is one configuration, and a run directory is never overwritten:
+#   python -m snake_rl.train --config configs/dqn_A_10x10.yaml --seed 0 --exp dqn_A_W10_g099 --set agent.gamma=0.99
+# (with scripts/run_matrix.py: --set ... --exp-prefix dqn_A_W10_g099)
+exp: dqn_A_W10
+env:
+  W: 10
+  action_mode: relative
+  starve_limit: null             # null -> max(100, W * W) = 100
+  obs: {kind: A}
+  reward: {variant: R0}
+agent:
+  kind: dqn
+  gamma: 0.9                     # the tabular reference's value; Part B's initial value was 0.99
+  lr: 2.5e-4                     # Adam
+  batch_size: 256
+  buffer_size: 100000            # transitions
+  learning_starts: 10000         # env steps collected before the first gradient step
+  grad_steps_per_vec_step: null  # null -> max(1, n_envs // 4) = 32: one gradient step per 4 env steps
+  target_update_every: 1000      # gradient steps between two hard target syncs
+  grad_clip: 10.0                # max global gradient norm
+  eps_start: 1.0
+  eps_end: 0.05
+  eps_decay_fraction: 0.2        # epsilon reaches eps_end after 20 % of total_env_steps
+  hidden: [256, 256]
+  double: false                  # Double DQN is studied in M7
+  keep_checkpoints: true         # weights-only checkpoint at every evaluation
+  device: cpu                    # faster than cuda for this small MLP, and deterministic
+  torch_threads: 2               # five seeds in parallel use 10 of the 16 logical cores
+train:
+  n_envs: 128
+  total_env_steps: 1024000
+  eval_every: 12800              # a multiple of n_envs; 80 evaluations + the one before any update
+  eval_episodes: 100
+  eval_seed: 10000

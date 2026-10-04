@@ -1,0 +1,46 @@
+# Smoke test of the DQN training path: a small MLP (11 -> 64 -> 64 -> 3) on observation A,
+# 8x8 board, 16,000 environment steps on the CPU with one torch thread, five evaluations
+# of 20 episodes. It finishes in seconds (most of it the torch import) and exercises every
+# file of a DQN run directory (config.yaml, metrics.csv, checkpoints/, model.pt,
+# final_eval.json). Not a result: the budget is far too small to say anything about the
+# agent. The CPU and a single thread make the run reproducible bit for bit.
+#
+# Run (writes runs/smoke_dqn_W8/0/; a run directory is never overwritten, so pick another
+# --seed or --exp to run it again):
+#   python -m snake_rl.train --config configs/smoke_8x8.yaml --seed 0
+# Five seeds through the batch runner:
+#   python scripts/run_matrix.py --config configs/smoke_8x8.yaml --seeds 0 1 2 3 4 --jobs 5
+# Change single values without editing this file. --set needs a new --exp: one experiment
+# name is one configuration:
+#   python -m snake_rl.train --config configs/smoke_8x8.yaml --seed 0 --exp smoke_dqn_W8_double --set agent.double=true
+exp: smoke_dqn_W8
+env:
+  W: 8
+  action_mode: relative
+  starve_limit: null             # null -> max(100, W * W) = 100
+  obs: {kind: A}
+  reward: {variant: R0}
+agent:
+  kind: dqn
+  gamma: 0.9
+  lr: 2.5e-4                     # Adam
+  batch_size: 64
+  buffer_size: 10000             # transitions
+  learning_starts: 1024          # env steps collected before the first gradient step
+  grad_steps_per_vec_step: null  # null -> max(1, n_envs // 4) = 4: one gradient step per 4 env steps
+  target_update_every: 250       # gradient steps between two hard target syncs
+  grad_clip: 10.0                # max global gradient norm
+  eps_start: 1.0
+  eps_end: 0.05
+  eps_decay_fraction: 0.2        # epsilon reaches eps_end after 20 % of total_env_steps
+  hidden: [64, 64]
+  double: false
+  keep_checkpoints: true         # weights-only checkpoint at every evaluation
+  device: cpu
+  torch_threads: 1
+train:
+  n_envs: 16
+  total_env_steps: 16000
+  eval_every: 4000               # a multiple of n_envs; 4 evaluations + the one before any update
+  eval_episodes: 20
+  eval_seed: 10000
