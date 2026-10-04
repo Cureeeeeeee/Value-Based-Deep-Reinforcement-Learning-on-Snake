@@ -1,0 +1,35 @@
+# Tabular Q-learning on observation A (11 binary features), 10x10 board,
+# reward R0, relative actions (PLAN.md milestone M4). This is the board of the
+# baselines table (random / BFS / Hamiltonian) and of the DQN experiments: the
+# "before function approximation" row of the results table.
+#
+# alpha / gamma / epsilon are starting points, not tuned values.
+#
+# Run one seed (about 9 s on the development machine; writes runs/tabular_q_W10/<seed>/):
+#   python -m snake_rl.train --config configs/tabular_q_10x10.yaml --seed 0
+# Change single values without editing this file (a new --exp keeps the runs apart):
+#   python -m snake_rl.train --config configs/tabular_q_10x10.yaml --seed 0 --exp tabular_q_W10_g09 --set agent.gamma=0.9
+# Five seeds for the table, then the table itself:
+#   python scripts/run_matrix.py --config configs/tabular_q_10x10.yaml --seeds 0 1 2 3 4
+#   python -m snake_rl.analysis.aggregate --exp runs/tabular_q_W10
+exp: tabular_q_W10
+env:
+  W: 10
+  action_mode: relative
+  starve_limit: null        # null -> max(100, W * W) = 100
+  obs: {kind: A}
+  reward: {variant: R0}
+agent:
+  kind: tabular_q
+  alpha: 0.1
+  gamma: 0.99
+  eps_start: 1.0
+  eps_end: 0.05
+  eps_decay_fraction: 0.2   # epsilon reaches eps_end after 20 % of total_env_steps
+  q_init: 0.0
+train:
+  n_envs: 50                # eval_every must be a multiple of n_envs (64 does not divide 50000)
+  total_env_steps: 1000000
+  eval_every: 50000         # 20 evaluations + the one before any update
+  eval_episodes: 100
+  eval_seed: 10000

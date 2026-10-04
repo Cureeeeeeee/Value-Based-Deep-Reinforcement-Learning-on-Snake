@@ -9,6 +9,20 @@ score, steps, length and the end cause; the summary gives mean score with a
 breakdown. Results serialise to JSON with the environment config and the git
 hash so that tables are regenerated from files, never typed by hand.
 
+``evaluate_batched(policy, cfg, n_episodes, seed)`` is the same protocol on
+the vectorised environment, for learned agents that act on a batch of
+observations (``policy.act_batch(obs) -> actions``). It steps
+``VecSnakeEnv(cfg, n_envs=n_episodes, seed=seed)`` and keeps, for every
+sub-env ``i``, only its **first** episode. Sub-env ``i`` owns the generator
+``default_rng(seed + i)``, the one behind ``reset(seed=seed + i)`` of the
+scalar environment, so a deterministic policy that reads nothing but the
+observation gets the same ``n_episodes`` boards and returns the same episode
+records as ``evaluate``. Sub-envs that finish early keep auto-resetting until
+the slowest one is done; those later episodes are discarded. Keeping "the
+first ``n_episodes`` episodes to finish" instead would over-represent short
+episodes (a board that dies early contributes again and again while a long
+episode is still running) and bias the mean score downwards.
+
 CLI::
 
     python -m snake_rl.evaluate --policy random bfs hamiltonian --W 10 --episodes 100
@@ -32,6 +46,7 @@ from snake_rl.env.common import CAUSE_NAMES
 from snake_rl.env.core import EnvConfig, SnakeEnv
 from snake_rl.env.obs import ObsConfig
 from snake_rl.env.rewards import RewardConfig
+from snake_rl.env.vec_env import VecSnakeEnv
 from snake_rl.utils import git_hash
 
 DEFAULT_EVAL_SEED = 10_000
@@ -154,6 +169,46 @@ def evaluate(policy, cfg: EnvConfig, n_episodes: int = 100, seed: int = DEFAULT_
                 break
         result.episodes.append(
             EpisodeRecord(seed=ep_seed, score=info["score"], steps=info["steps"], length=info["length"], cause=info["cause"])
+        )
+    result.wall_time_s = time.perf_counter() - t0
+    return result
+
+
+def evaluate_batched(policy, cfg: EnvConfig, n_episodes: int = 100, seed: int = DEFAULT_EVAL_SEED) -> EvalResult:
+    """Greedy evaluation on the vectorised env: the first episode of each of
+    ``n_episodes`` sub-envs, sub-env ``i`` seeded ``seed + i``.
+
+    ``policy`` needs ``name`` and ``act_batch(obs (N, *obs_shape)) -> (N,)``
+    integer actions and must be a deterministic function of the observation;
+    the result then equals ``evaluate(policy, cfg, n_episodes, seed)`` episode
+    by episode (see the module docstring). Episodes are ordered by ``i``.
+    ``policy.reset()``, if it exists, is called once before the first step
+    (all first episodes start together).
+    """
+    if n_episodes < 1:
+        raise ValueError(f"n_episodes must be at least 1, got {n_episodes}")
+    env = VecSnakeEnv(cfg, n_envs=n_episodes, seed=seed)
+    result = EvalResult(policy=policy.name, env=env_config_to_dict(cfg), seed=seed, git=git_hash())
+    t0 = time.perf_counter()
+    if hasattr(policy, "reset"):
+        policy.reset()
+    obs = env.reset()
+    # ``info`` reports the counters of the episode that just ended (the state
+    # arrays of the env already hold the next one), so the record of a sub-env
+    # is copied from ``info`` on the step that ends its first episode.
+    keys = ("score", "steps", "length", "cause")
+    first = {key: np.zeros(n_episodes, dtype=np.int64) for key in keys}
+    pending = np.ones(n_episodes, dtype=bool)  # first episode still running
+    while pending.any():
+        obs, _, _, _, info = env.step(policy.act_batch(obs))
+        ended = pending & info["done"]
+        for key in keys:
+            first[key][ended] = info[key][ended]
+        pending &= ~ended
+    columns = [first[key].tolist() for key in keys]  # Python ints: JSON-serialisable
+    for i, (score, steps, length, cause) in enumerate(zip(*columns)):
+        result.episodes.append(
+            EpisodeRecord(seed=seed + i, score=score, steps=steps, length=length, cause=CAUSE_NAMES[cause])
         )
     result.wall_time_s = time.perf_counter() - t0
     return result

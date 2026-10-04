@@ -1,0 +1,30 @@
+# Smoke test of the training entry point: tabular Q-learning on an 8x8 board,
+# 32,000 environment steps, five evaluations of 20 episodes. It finishes in a
+# couple of seconds and exercises every file of a run directory
+# (config.yaml, metrics.csv, q_table.npz, final_eval.json). Not a result:
+# the budget is far too small to say anything about the agent.
+#
+# Run (writes runs/smoke_tabular/0/; a run directory is never overwritten, so
+# pick another --seed or --exp to run it again):
+#   python -m snake_rl.train --config configs/smoke_tabular.yaml --seed 0
+exp: smoke_tabular
+env:
+  W: 8
+  action_mode: relative
+  starve_limit: null        # null -> max(100, W * W) = 100
+  obs: {kind: A}
+  reward: {variant: R0}
+agent:
+  kind: tabular_q
+  alpha: 0.1
+  gamma: 0.99
+  eps_start: 1.0
+  eps_end: 0.05
+  eps_decay_fraction: 0.2   # epsilon reaches eps_end after 20 % of total_env_steps
+  q_init: 0.0
+train:
+  n_envs: 16
+  total_env_steps: 32000
+  eval_every: 8000          # a multiple of n_envs; 4 evaluations + the one before any update
+  eval_episodes: 20
+  eval_seed: 10000

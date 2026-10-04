@@ -1,0 +1,34 @@
+# Tabular Q-learning on observation A (11 binary features), 8x8 board, reward
+# R0, relative actions (PLAN.md milestone M4). The quick configuration: the
+# M4 acceptance check ("clearly beats the random player within minutes") and
+# the first stop of a hyper-parameter sweep before moving to 10x10.
+#
+# alpha / gamma / epsilon are starting points, not tuned values.
+#
+# Run one seed (about 5 s on the development machine; writes runs/tabular_q_W8/<seed>/):
+#   python -m snake_rl.train --config configs/tabular_q_8x8.yaml --seed 0
+# Change single values without editing this file (a new --exp keeps the runs apart):
+#   python -m snake_rl.train --config configs/tabular_q_8x8.yaml --seed 0 --exp tabular_q_W8_g09 --set agent.gamma=0.9
+# Several seeds or a grid:
+#   python scripts/run_matrix.py --config configs/tabular_q_8x8.yaml --seeds 0 1 2 3 4
+exp: tabular_q_W8
+env:
+  W: 8
+  action_mode: relative
+  starve_limit: null        # null -> max(100, W * W) = 100
+  obs: {kind: A}
+  reward: {variant: R0}
+agent:
+  kind: tabular_q
+  alpha: 0.1
+  gamma: 0.99
+  eps_start: 1.0
+  eps_end: 0.05
+  eps_decay_fraction: 0.2   # epsilon reaches eps_end after 20 % of total_env_steps
+  q_init: 0.0
+train:
+  n_envs: 50                # eval_every must be a multiple of n_envs (64 does not divide 25000)
+  total_env_steps: 500000
+  eval_every: 25000         # 20 evaluations + the one before any update
+  eval_episodes: 100
+  eval_seed: 10000
