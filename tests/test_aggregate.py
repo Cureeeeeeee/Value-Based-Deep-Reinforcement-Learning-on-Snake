@@ -132,7 +132,7 @@ def write_run(
         "env": ENV,
         "agent": {"kind": "tabular_q", "alpha": 0.1, "gamma": 0.99, "eps_start": 1.0, "eps_end": 0.05,
                   "eps_decay_fraction": 0.2, "q_init": 0.0},
-        "train": {"n_envs": 64, "total_env_steps": 200, "eval_every": 100, "eval_episodes": len(episodes),
+        "train": {"n_envs": 64, "total_env_steps": 200, "eval_every": 100, "eval_episodes": 2,
                   "eval_seed": EVAL_SEED},
     }
     if run_block:

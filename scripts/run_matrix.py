@@ -170,6 +170,10 @@ def plan_runs(
         except ValueError as err:
             where = f"grid point {' '.join(grid_overrides)}: " if point else ""
             raise ValueError(f"{where}{err}") from err
+        # Every run already recorded under this name, not only the planned
+        # seeds: one experiment name must not mix configurations.
+        for recorded in sorted((Path(runs_dir) / exp).glob(f"*/{CONFIG_FILE}")):
+            existing_status(recorded.parent, cfg)
         for seed in seeds:
             run_dir = Path(runs_dir) / exp / str(seed)
             command = [sys.executable, "-m", "snake_rl.train", "--config", str(config), "--seed", str(seed)]

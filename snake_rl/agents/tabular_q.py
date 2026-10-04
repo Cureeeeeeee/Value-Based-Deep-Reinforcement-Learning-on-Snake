@@ -20,9 +20,11 @@ For one transition ``(s, a, r, s', terminated)``::
     target   = r + gamma * (0 if terminated else max_a' Q[s', a'])
     Q[s, a] += alpha * (target - Q[s, a])
 
-The max over the successor's actions makes the method off-policy: the table
-estimates the value of the greedy policy while an epsilon-greedy policy
-collects the data.
+The max over the successor's actions makes the method off-policy: the target
+is the value of acting greedily on the current table from the successor on,
+while an epsilon-greedy policy collects the data. In a Markov state this
+converges to the optimal action values; on observation A it does not (see
+"What the table can and cannot learn").
 
 terminated is not truncated
 ---------------------------
@@ -34,11 +36,16 @@ ordinary state from which the game would have continued, so the target
 bootstraps from it like any other transition. Treating truncation as terminal
 would write "the future is worth nothing here" into entries shared with every
 other visit of the same state, driven by a hidden clock. Bootstrapping keeps
-the value of looping behaviour honest: a policy that circles forever gets the
-discounted return of circling forever (zero under R0, the accumulated step
-penalty under R1, the accumulated shaping bonus under R3), not a value cut
-off after ``H`` steps. Whether looping pays is then decided by the reward
-design alone, which is what the reward experiments measure.
+the hidden clock out of the targets (partial-episode bootstrapping, Pardo et
+al. 2018). It does not make the table's value of a loop correct: observation
+A aliases the boards of a loop with boards that go on to eat, so the codes on
+a loop keep an ordinary value (measured on 8x8 at gamma 0.99: about 8, where
+the looping greedy policy really earns 0 under R0). Only in a Markov state
+would circling forever be worth its true return: 0 under R0,
+``-step_penalty / (1 - gamma)`` under R1, about ``0.005 / (1 - gamma)`` under
+the default asymmetric R3. Whether looping pays therefore depends on the
+reward design and on the discount together (R3: 0.5 at gamma 0.99, 0.05 at
+gamma 0.9, against +1 for one food).
 
 The caller therefore passes the environment's ``terminated`` flag (never
 ``done``) and takes ``next_obs`` from ``info["final_obs"]`` of
@@ -54,8 +61,14 @@ the batch moves by ``alpha`` times the *mean* TD error of its transitions.
 Duplicates are averaged, not summed: ``k`` transitions of one cell make one
 step of size ``alpha`` towards their mean target, so the effective step size
 does not grow with the number of environments (a sum would step by
-``k * alpha``). With ``N = 1`` every cell occurs once and the rule is exactly
-the textbook update above.
+``k * alpha``). The price is that each of the ``k`` transitions moves the
+table by ``alpha / k``: a cell is updated at most once per vec-step, so for
+the same number of environment steps the busy cells make fewer and less noisy
+steps than with one environment (on 8x8 with 50 environments the busiest
+cells receive about two transitions per vec-step). The expected direction of
+a cell's update is unchanged, because the sub-environments are independent.
+With ``N = 1`` every cell occurs once and the rule is exactly the textbook
+update above.
 
 What the table can and cannot learn
 -----------------------------------
@@ -64,15 +77,24 @@ the board size, so many different boards share one code. The table does not
 learn the optimal action values of the game; it learns one value per
 *aggregate* of boards (state aggregation with a fixed hard partition),
 averaged over the boards the behaviour policy happens to visit under that
-code. The convergence guarantee of tabular Q-learning does not carry over to
-the aggregated process, and no amount of training recovers what the features
-removed - the agent cannot see the dead end it is entering. That ceiling
-belongs to the representation, not to the learner, which is exactly why this
-agent is the reference point for the DQN on the same features: the network
-sees the same 2048 codes, and every greedy policy it can express on them is
-also a table. A difference between the two on observation A is therefore a
-difference in learning dynamics (replay, target network, optimiser), not in
-what can be represented; what the features removed can only come back with a
+code. Convergence to the optimal action values does not carry over. With a
+fixed behaviour distribution and decaying step sizes, Q-learning with hard
+state aggregation still converges, but to the solution of an aggregated
+Bellman equation that depends on that distribution (Singh, Jaakkola & Jordan
+1995); here the distribution comes from epsilon-greedy on the table itself
+and the step size is constant, so the table keeps moving. No amount of
+training recovers what the features removed - the agent cannot see the dead
+end it is entering. That is a limit of the representation; the score this
+learner reaches is not: Q-learning under state aliasing is not guaranteed to
+find the best policy on these features (Singh, Jaakkola & Jordan 1994), so
+its score is a lower bound on what observation A allows.
+
+This agent is the reference point for the DQN on the same features: the
+network sees the same 256 codes, and every greedy policy it can express on
+them is also a table. If the DQN on observation A scores higher, the reason
+is therefore learning dynamics (generalisation across codes, replay, target
+network, optimiser), not representation; if it scores lower, limited network
+capacity is not excluded. What the features removed can only come back with a
 richer observation (B).
 
 Exploration

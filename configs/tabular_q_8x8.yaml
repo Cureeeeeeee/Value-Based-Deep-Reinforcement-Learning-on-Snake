@@ -3,16 +3,18 @@
 # M4 acceptance check ("clearly beats the random player within minutes") and
 # the first stop of a hyper-parameter sweep before moving to 10x10.
 #
-# alpha / gamma / epsilon come from the 8x8 sweep of M4 (docs/PROGRESS.md; runs under
-# runs/sweep_tabular_W8/, sweep seeds 10-14, disjoint from the report seeds 0-4): the final
-# greedy score is flat for alpha 0.1-0.3, gamma 0.8-0.95 and every epsilon schedule tried;
-# only gamma = 0.99 is worse (lower mean, wider spread over seeds, greedy policies that loop
-# until the starvation limit).
+# alpha / gamma / epsilon were checked on the 8x8 sweep of M4 (docs/PROGRESS.md; runs under
+# runs/sweep_tabular_W8/, sweep seeds 10-14, disjoint from the report seeds 0-4, 500k steps):
+# the final greedy score does not separate alpha 0.1 from 0.3, gamma 0.8 / 0.9 / 0.95 or any
+# of the nine epsilon schedules. Two settings are worse at that budget: alpha = 0.02 (about
+# 0.8 lower) and, for alpha >= 0.1, gamma = 0.99 (about 2 lower, wider spread over seeds,
+# greedy policies that loop until the starvation limit). The values below are one setting
+# inside the flat region, not its best cell.
 #
 # Run one seed (about 5 s on the development machine; writes runs/tabular_q_W8/<seed>/):
 #   python -m snake_rl.train --config configs/tabular_q_8x8.yaml --seed 0
 # Change single values without editing this file (a new --exp keeps the runs apart):
-#   python -m snake_rl.train --config configs/tabular_q_8x8.yaml --seed 0 --exp tabular_q_W8_g09 --set agent.gamma=0.9
+#   python -m snake_rl.train --config configs/tabular_q_8x8.yaml --seed 0 --exp tabular_q_W8_g099 --set agent.gamma=0.99
 # Several seeds or a grid:
 #   python scripts/run_matrix.py --config configs/tabular_q_8x8.yaml --seeds 0 1 2 3 4
 exp: tabular_q_W8

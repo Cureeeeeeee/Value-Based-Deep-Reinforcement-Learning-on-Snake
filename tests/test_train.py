@@ -240,7 +240,7 @@ def snapshot(directory: Path) -> dict:
 
 # =================================================================== config
 SHIPPED = {
-    # gamma 0.9 on the two boards: chosen by the 8x8 sweep of M4 (docs/PROGRESS.md).
+    # gamma 0.9 on the two boards: chosen after the 8x8 sweep of M4 (docs/PROGRESS.md).
     "tabular_q_8x8.yaml": dict(exp="tabular_q_W8", W=8, gamma=0.9, n_envs=50, total=500_000, every=25_000,
                                episodes=100),
     "tabular_q_10x10.yaml": dict(exp="tabular_q_W10", W=10, gamma=0.9, n_envs=50, total=1_000_000, every=50_000,
@@ -558,6 +558,21 @@ def test_the_scientific_notation_trap_is_explained():
 def test_a_malformed_override_is_a_value_error(override):
     message = config_error(SMOKE, [override])
     assert repr(override) in message
+
+
+# ------------------------------------------------------------ repeated keys
+DUPLICATE_KEY = "exp: dup\nagent:\n  kind: tabular_q\n  gamma: 0.9\n  alpha: 0.1\n  gamma: 0.5\n"
+DUPLICATE_SECTION = "exp: dup\nagent: {kind: tabular_q}\ntrain:\n  eval_episodes: 20\ntrain:\n  n_envs: 50\n"
+
+
+@pytest.mark.parametrize("text, key", [(DUPLICATE_KEY, "gamma"), (DUPLICATE_SECTION, "train")])
+def test_a_repeated_key_is_refused(tmp_path, text, key):
+    """PyYAML keeps the last of two equal keys silently; a second ``train:``
+    block would drop the keys of the first one back to their defaults."""
+    path = tmp_path / "dup.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=f"duplicate key '{key}'"):
+        load_config(path)
 
 
 # --------------------------------------------------------------- round trip

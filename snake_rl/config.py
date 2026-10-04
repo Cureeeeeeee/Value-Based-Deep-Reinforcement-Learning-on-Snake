@@ -172,6 +172,21 @@ def config_from_dict(raw: Mapping[str, Any]) -> ExperimentConfig:
     return cfg
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """``yaml.safe_load`` that refuses a repeated key. PyYAML keeps the last
+    one silently, so a second ``train:`` block would drop the keys of the
+    first one back to their defaults."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=True)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(None, None, f"duplicate key {key!r}", key_node.start_mark)
+            seen.add(key)
+        return super().construct_mapping(node, deep)
+
+
 def load_config(path: str | Path, overrides: Sequence[str] = ()) -> ExperimentConfig:
     """Read a YAML experiment file, apply ``dotted.key=value`` overrides in
     order, validate. ``ValueError`` (prefixed with the path) on any problem."""
@@ -179,7 +194,7 @@ def load_config(path: str | Path, overrides: Sequence[str] = ()) -> ExperimentCo
     if isinstance(overrides, str):
         overrides = (overrides,)
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
         if raw is None:
             raw = {}
         if not isinstance(raw, dict):

@@ -183,7 +183,48 @@ def load_runs(exp_dir: str | Path) -> list[RunResult]:
     if len(set(seeds)) != len(seeds):
         dirs = ", ".join(f"{r.run_dir.name} (seed {r.seed})" for r in runs)
         raise ValueError(f"{exp_dir}: duplicate seeds among run directories: {dirs}")
+    _require_one_configuration(exp_dir, runs)
     return runs
+
+
+#: Top-level keys of ``config.yaml`` that may differ between the runs of one
+#: experiment: the ``run`` block (seed, git, start time, argv) and the name.
+_PER_RUN_KEYS = ("run", "exp")
+_ABSENT = object()
+
+
+def _flat_settings(node: Any, prefix: str = "") -> dict[str, Any]:
+    """``{"agent": {"alpha": 0.1}}`` -> ``{"agent.alpha": 0.1}``."""
+    if not isinstance(node, dict):
+        return {prefix[:-1]: node}
+    flat: dict[str, Any] = {}
+    for key, value in node.items():
+        flat.update(_flat_settings(value, f"{prefix}{key}."))
+    return flat
+
+
+def _require_one_configuration(exp_dir: Path, runs: Sequence[RunResult]) -> None:
+    """``ValueError`` unless all finished runs were trained with one configuration.
+
+    The seed is the only thing that may differ between the replicates of a
+    row; a run started with another ``--set`` under the same experiment name
+    is not a replicate. Compared: every key of ``config.yaml`` except the
+    ``run`` block and ``exp``, as written (a key missing in one file differs).
+    """
+    settings = [_flat_settings({k: v for k, v in r.config.items() if k not in _PER_RUN_KEYS}) for r in runs]
+    first, first_dir = settings[0], runs[0].run_dir.name
+    differences = []
+    for run, other in zip(runs[1:], settings[1:]):
+        for key in sorted(first.keys() | other.keys()):
+            a, b = first.get(key, _ABSENT), other.get(key, _ABSENT)
+            if a is _ABSENT or b is _ABSENT or a != b:
+                shown = [("absent" if v is _ABSENT else repr(v)) for v in (a, b)]
+                differences.append(f"{key}: {shown[0]} in {first_dir}, {shown[1]} in {run.run_dir.name}")
+    if differences:
+        raise ValueError(
+            f"{exp_dir}: the runs do not share one configuration ({'; '.join(differences)}); "
+            f"a row must average seeds of ONE configuration - move the odd run(s) to their own experiment directory"
+        )
 
 
 # ----------------------------------------------------------------- summaries
