@@ -53,13 +53,14 @@ snake_rl/
     baselines.py random / BFS greedy (time-aware) / Hamiltonian cycle
     tabular_q.py tabular Q-learning on observation A (synchronous batch form)
     schedules.py linear epsilon schedule
-    dqn/         networks.py, replay.py, agent.py (double / dueling switches)       [M5-M7]
+    dqn/         config.py (torch-free), networks.py (MLP; CNN in M6), replay.py (uniform),
+                 agent.py (DQN with target network; Double DQN switch)
   config.py      YAML experiment files: loading, --set overrides, validation, seed layout
-  train.py       config-driven training, writes runs/<exp>/<seed>/ (tabular Q; DQN in M5)
+  train.py       config-driven training, writes runs/<exp>/<seed>/ (tabular Q and DQN)
   evaluate.py    greedy evaluation protocol with death-cause breakdown, scalar and batched (+ CLI)
   utils.py       git hash and other reproducibility helpers
   analysis/      aggregate.py (results table and learning curves from run directories),
-                 plots.py                                                           [M10]
+                 plots.py (evaluation-curve figure)
   gui/app.py     pygame: human play / agent play with live Q-values / replay        [M9]
 tests/           pytest; the scalar-vs-vectorised equivalence test is the regression gate
 configs/         one yaml per experiment
@@ -108,6 +109,8 @@ about 0.2.
 
 ```powershell
 python -m snake_rl.train --config configs/tabular_q_10x10.yaml --seed 0          # one run, about 9 s
+python -m snake_rl.train --config configs/smoke_8x8.yaml --seed 0                # DQN smoke run, seconds, CPU
+python scripts/run_matrix.py --config configs/dqn_A_10x10.yaml --seeds 0 1 2 3 4 --jobs 5   # about 10 min on the CPU
 python scripts/run_matrix.py --config configs/tabular_q_10x10.yaml --seeds 0 1 2 3 4 --jobs 5
 python -m snake_rl.analysis.aggregate --baseline runs/baselines/random_W10_relative.json runs/baselines/bfs_W10_relative.json runs/baselines/hamiltonian_W10_relative.json --exp runs/tabular_q_W10 --out runs/tables/m4_W10.md --curves-dir runs/tables/curves
 ```
@@ -122,6 +125,23 @@ directories by `snake_rl.analysis.aggregate`; learner rows carry a Student-t
 interval over training seeds, baseline rows an interval over the 100
 evaluation episodes (column `CI over`).
 
-Tabular Q-learning on the 11-feature observation (5 seeds, 100 greedy episodes
-each on the baselines' boards) scores 15.67 +- 0.87 on 8x8 and 18.51 +- 1.10 on
-10x10, against 0.2 for the random player and 23.07 / 30.61 for BFS greedy.
+```powershell
+python -m snake_rl.analysis.plots --exp "runs/tabular_q_W10=tabular Q-learning" "runs/dqn_A_W10=DQN (MLP)" --baseline "runs/baselines/random_W10_relative.json=random" "runs/baselines/bfs_W10_relative.json=BFS greedy" --out runs/figures/m5_W10_curve.png
+```
+
+draws the evaluation curves (mean over seeds with a Student-t band; baselines as
+dashed lines). `aggregate --last-k 5` adds the mean of the last five evaluations
+per seed, which is less noisy than the last snapshot.
+
+Results on the 11-feature observation (5 seeds, 100 greedy episodes each on the
+baselines' boards; last evaluation):
+
+| board | random | tabular Q | tabular Q, gamma = 0 | DQN (MLP) | BFS greedy |
+|---|---|---|---|---|---|
+| 8x8 | 0.23 | 15.67 +- 0.87 | 16.07 +- 0.10 | 16.11 +- 0.88 | 23.07 |
+| 10x10 | 0.18 | 18.51 +- 1.10 | 19.69 +- 0.00 | 20.29 +- 1.55 | 30.61 |
+
+A table trained with gamma = 0 (no look-ahead) reaches the same level, so on
+these features the score reflects a reactive policy (avoid the blocked move,
+turn to the food), not multi-step value learning; `docs/PROGRESS.md` has the
+full analysis.

@@ -49,6 +49,7 @@ snake-rl/
       tabular_q.py          # 表格 Q-learning（观测 A；同步批量形式，N=1 时即教科书更新）
       schedules.py          # ε 线性调度（表格 Q 与 DQN 共用）
       dqn/
+        config.py           # DQNConfig（不导入 torch；M5 新增）
         networks.py         # MLP / CNN / Dueling 头
         replay.py           # 均匀 buffer；PER 放最后
         agent.py            # DQN，flags: double / dueling
