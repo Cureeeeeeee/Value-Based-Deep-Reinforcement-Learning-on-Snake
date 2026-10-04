@@ -46,21 +46,24 @@ snake_rl/
   env/
     common.py    rules shared by both environments (headings, actions, food sampling, body_age helpers)
     core.py      scalar reference environment (gymnasium.Env), readability first
-    vec_env.py   vectorised (N, W, W) environment for training, throughput first   [M3]
+    vec_env.py   vectorised (N, W, W) environment for training, throughput first
     obs.py       observation A (11 features) / B (multi-plane grid), written once
     rewards.py   reward variants R0-R3, written once
   agents/
     baselines.py random / BFS greedy (time-aware) / Hamiltonian cycle
-    tabular_q.py tabular Q-learning on observation A                                [M4]
+    tabular_q.py tabular Q-learning on observation A (synchronous batch form)
+    schedules.py linear epsilon schedule
     dqn/         networks.py, replay.py, agent.py (double / dueling switches)       [M5-M7]
-  train.py       config-driven training, writes runs/<exp>/<seed>/                  [M5]
-  evaluate.py    greedy evaluation protocol with death-cause breakdown (+ CLI)
+  config.py      YAML experiment files: loading, --set overrides, validation, seed layout
+  train.py       config-driven training, writes runs/<exp>/<seed>/ (tabular Q; DQN in M5)
+  evaluate.py    greedy evaluation protocol with death-cause breakdown, scalar and batched (+ CLI)
   utils.py       git hash and other reproducibility helpers
-  analysis/      aggregate.py (cross-seed CI), plots.py                             [M10]
+  analysis/      aggregate.py (results table and learning curves from run directories),
+                 plots.py                                                           [M10]
   gui/app.py     pygame: human play / agent play with live Q-values / replay        [M9]
 tests/           pytest; the scalar-vs-vectorised equivalence test is the regression gate
 configs/         one yaml per experiment
-scripts/         check_env.py, run_matrix.py (seeds x configs batch runner)
+scripts/         check_env.py, bench_vec_env.py (throughput), run_matrix.py (seeds x grid batch runner)
 notebooks/       Colab notebook regenerating the main figures from logs/checkpoints
 runs/            training outputs (not in git)
 ```
@@ -100,3 +103,25 @@ records, summary) and prints a markdown table with mean score, 95 % CI and the
 death-cause breakdown. On 10x10 the Hamiltonian player wins every game (97),
 BFS greedy scores about 31 and dies mostly by trapping itself, random scores
 about 0.2.
+
+## Training, batches and tables
+
+```powershell
+python -m snake_rl.train --config configs/tabular_q_10x10.yaml --seed 0          # one run, about 9 s
+python scripts/run_matrix.py --config configs/tabular_q_10x10.yaml --seeds 0 1 2 3 4 --jobs 5
+python -m snake_rl.analysis.aggregate --baseline runs/baselines/random_W10_relative.json runs/baselines/bfs_W10_relative.json runs/baselines/hamiltonian_W10_relative.json --exp runs/tabular_q_W10 --out runs/tables/m4_W10.md --curves-dir runs/tables/curves
+```
+
+A run writes `runs/<exp>/<seed>/` with `config.yaml` (full configuration, seed,
+git hash), `metrics.csv` (the greedy evaluation curve), the checkpoint and
+`final_eval.json` (per-episode records of the last evaluation). A run is never
+overwritten, and one experiment directory holds seeds of one configuration
+only: use `--exp` (or `--exp-prefix` / `--grid` with `run_matrix.py`) whenever
+`--set` changes a value. Tables and curves are regenerated from the run
+directories by `snake_rl.analysis.aggregate`; learner rows carry a Student-t
+interval over training seeds, baseline rows an interval over the 100
+evaluation episodes (column `CI over`).
+
+Tabular Q-learning on the 11-feature observation (5 seeds, 100 greedy episodes
+each on the baselines' boards) scores 15.67 +- 0.87 on 8x8 and 18.51 +- 1.10 on
+10x10, against 0.2 for the random player and 23.07 / 30.61 for BFS greedy.
