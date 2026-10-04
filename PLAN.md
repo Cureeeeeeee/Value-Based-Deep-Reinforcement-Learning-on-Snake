@@ -115,8 +115,8 @@ Part B 已定的不重复。以下是实现层面的决定，标 **[决定]** �
 
 - 同一语义作用在 `(N,W,W)` 数组上；`body_age` 的递减/置头/碰撞全是掩码运算。
 - 食物重生：给每格采一个随机键，占用格置 +∞，`argmin` → 均匀分布且完全向量化。**标量环境也用同一套采样协议**，否则等价性测试过不了。
-- 自动重置：done 的环境立即 reset，返回新局首观测，另给 `done_mask / final_score / final_cause` 数组。
-- RNG：每个环境一个 `np.random.Generator`（种子 = base_seed + i）。
+- 自动重置：done 的环境立即 reset；`step` 返回的 `obs` 是新局首观测（未结束的环境即后继观测）。`info = {final_obs, done, cause, score, length, steps}`，均带前导 N 轴：`final_obs` 是本步转移的**真实后继观测**（重置前快照；replay buffer 必须存它作 `next_obs`，否则饥饿截断步无法 bootstrap，违反第 0 节第 3 条）；`done = terminated | truncated`；`cause` 是 `common.CAUSE_*` 整数 id（标量环境给字符串，用 `CAUSE_NAMES` 映射）；`score / length / steps` 是重置前的值（仅在 `done` 处是整局总量）。`reset()` 只返回观测，不带 info。（2026-10-04 M3 更新：原文写的是 `done_mask / final_score / final_cause`，且漏了 `final_obs`。）
+- RNG：每个环境一个 `np.random.Generator`（种子 = base_seed + i）。推论：两个 base_seed 相差小于 N 的向量化环境共用大部分生成器，所以不同 run 的 base_seed 必须至少相隔 N（M5 的 `train.py` 负责）。
 
 ### 3.7 测试清单（`tests/`，M1 验收）
 
@@ -137,7 +137,7 @@ Part B 承诺的全部 + 追尾合法性 + `H` 恰好触发 + R2 折扣望远镜
 | M0 | 仓库骨架、requirements、README、pytest 空跑 | 你本地 `pip install -r requirements.txt` 通过，`torch.cuda.is_available()==True` |
 | M1 | `core.py` + `obs.py` + `rewards.py` + 测试 | 3.7 全绿 |
 | M2 | 基线三件套 + `evaluate.py` | 10×10 上三条基线的分数表（100 局、死因分解）；Hamiltonian 近满分，BFS 主要死于自困 |
-| M3 | `vec_env.py` + 等价性测试 + 吞吐基准 | 等价测试绿；报出 steps/s（决定后面每个 run 的时间预算） |
+| M3 | `vec_env.py` + 等价性测试 + 吞吐基准 | 等价测试绿；报出 env-only steps/s（采集/评估速度的上界；每个 run 的时间预算由梯度更新次数决定，M3 实测见 `docs/PROGRESS.md`） |
 | M4 | 表格 Q-learning（观测 A，8×8 → 10×10） | 数分钟内明显超过 random；给出 ε/α/γ 起点 |
 | M5 | DQN 核心（MLP on A）+ 评估协议 + 日志/checkpoint | 首条评估曲线；DQN-A ≈ 表格 Q 同特征水平 |
 | M6 | CNN on B（8 平面 / 3 平面）；±replay ±target 消融 | 四条消融曲线；B 有/无方向信息对比 |

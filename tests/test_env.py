@@ -287,6 +287,11 @@ def test_set_state_validation():
     env = make_env(10)
     with pytest.raises(ValueError):
         env.set_state([(0, 0), (0, 2)], food=(5, 5))  # not adjacent
+    # A gap that infer_heading cannot see: only the pairwise-adjacency check rejects these.
+    with pytest.raises(ValueError):
+        env.set_state([(0, 0), (0, 2), (0, 3)], food=(5, 5))
+    with pytest.raises(ValueError):
+        env.set_state([(0, 0), (0, 2)], food=(5, 5), heading=RIGHT)
     with pytest.raises(ValueError):
         env.set_state(STRAIGHT_RIGHT, food=(5, 4))  # food on snake
 

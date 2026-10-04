@@ -11,8 +11,9 @@ import gymnasium as gym
 from .core import EnvConfig, SnakeEnv
 from .obs import ObsConfig
 from .rewards import RewardConfig
+from .vec_env import VecSnakeEnv
 
-__all__ = ["EnvConfig", "ObsConfig", "RewardConfig", "SnakeEnv"]
+__all__ = ["EnvConfig", "ObsConfig", "RewardConfig", "SnakeEnv", "VecSnakeEnv"]
 
 if "Snake-v0" not in gym.registry:
     gym.register(id="Snake-v0", entry_point="snake_rl.env.core:SnakeEnv")
