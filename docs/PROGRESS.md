@@ -138,11 +138,12 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | 观测 B 的 Markov 修复 | 身体年龄平面（方向平面仅冗余）（已实现） | 二值身体平面丢的是身体顺序，方向平面只修颈不修尾 |
 | 满盘（`length == W²`） | `terminated`, cause = `win`（已实现） | 无空格可放食物；Part B 未定义此终止，2026-09-16 补入契约 |
 | R3 的定义 | **非对称**：靠近 +0.01，远离 0（已按此实现为默认；`farther=-0.01` 还原 Part B） | 对称 ±0.01 ≡ Φ=−0.01·d 的势函数塑形取 γ=1，与 R2 只差 ~1e-4/步，不会出现 hacking；非对称版才有可钻的循环（两步净 +0.01） |
-| （M5）每 vec-step 的梯度步数 G 与 batch | 默认仍是 PLAN §0.5 的 `G = N_envs/4`、batch 256 | 备选 `G = 8`、batch 1024：每 vec-step 采样的转移数相同，探针实测快 3.5–3.9×（单次更新耗时几乎不随 batch 变），但改变了优化动态（更新次数少 4 倍）。时间紧时用备选，并在报告里写明；两者都要在 M5 冒烟里比一次学习曲线 |
+| （M5）每 vec-step 的梯度步数 G 与 batch | **已拍板（用户，2026-10-04）**：M5 冒烟时 `G = N_envs/4`、batch 256 与 `G = 8`、batch 1024 各跑一条学习曲线，再定正式训练用哪个；定下来之前默认仍是 PLAN §0.5 的前者 | 备选 `G = 8`、batch 1024：每 vec-step 采样的转移数相同，探针实测快 3.5–3.9×（单次更新耗时几乎不随 batch 变），但改变了优化动态（更新次数少 4 倍）。选了哪个、依据哪两条曲线，都要写进报告 |
 | （M5）优化器 | `Adam(fused=True)` | 探针实测单次更新 −24%（1576 → 1204 µs），数值上等价于普通 Adam |
 | （M5）`n_envs` | 观测 A 用 128，B8 用 128 | 固定 UTD 时 `n_envs` 不影响墙钟；B8 在 N>128 时 env-only 吞吐反而下降 |
 | CI | **未做**。Part B 写了 "the vectorised/single-environment equivalence test runs in CI" | 需要一个 GitHub Actions workflow（CPU，装 numpy/gymnasium/pytest 即可跑 `tests/`）。推送 workflow 文件需要 token 带 `workflow` 权限。默认：Part C 交完后再加；不加就要在"偏离 Part B"里记一条 |
-| `CLAUDE.md` 第 36 行、`设计依据.md` 第 78 行的"瓶颈在环境步进" | **未改，等用户确认**。建议改为"训练吞吐瓶颈在梯度更新次数（每次约 2 ms 的 CPU 侧调用开销，与 batch 大小基本无关），不在环境步进也不在 GPU 算力" | 见"偏离 Part B 的记录"2026-10-04 行；`CLAUDE.md` 是项目规则文件，不由 Claude 自行改动 |
+| `CLAUDE.md` 第 36 行的"瓶颈在环境步进" | **已改（用户 2026-10-04 批准）**：改为"瓶颈在梯度更新次数，不在环境步进也不在 GPU 算力"，并写入预算公式 | 见"偏离 Part B 的记录"2026-10-04 行 |
+| `设计依据.md` 第 78 行的同一说法 | **未改**（用户的批准只涉及 `CLAUDE.md`）。写报告引用该文档 §6 时以本文件"M3 验收"的实测为准 | 该文档是背景材料，更正已记在本文件 |
 
 ## 偏离 Part B 的记录
 
@@ -153,7 +154,7 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | 2026-09-15 | Python 3.13.7（Part B 写 3.11） | 本地已装 3.13.7，torch ≥2.7 兼容 |
 | 2026-09-30 | R3 默认改为非对称（靠近 +0.01，远离 0）；Part B 的 ±0.01 保留为 `RewardConfig(farther=-0.01)` | 对称版等价于 γ=1 的势函数塑形，理论上不可 hack，达不到 Part B 写它的目的（"deliberately to expose reward hacking"）。Part E 里两版都跑并解释 |
 | 2026-09-30 | 新增 `win` 终止（满盘）| Part B 只列了 wall / self / starvation；满盘时无法刷食物，必须终止 |
-| 2026-10-04 | **事实更正**：Part B 第 38 行 "throughput of the Python step loop is the real bottleneck, not the GPU"（`CLAUDE.md` 第 36 行、`设计依据.md` 第 78 行、`PLAN.md` §4 M3 行同此说法）**不成立** | M3 实测：向量化后在默认 `G = N/4` 下 `env.step` 只占整环路 0.3–0.8%，梯度更新占 98–99%；即使 `G = 1` 环境也只占 11%。后半句"不在 GPU"成立——单次更新约 2 ms 且与 batch 大小基本无关，是 CPU 侧的调用开销。准确说法：**瓶颈是梯度更新次数**。`PLAN.md` §4 已改；Part B 是已提交文档不动，Part E 报告里按实测写 |
+| 2026-10-04 | **事实更正**：Part B 第 38 行 "throughput of the Python step loop is the real bottleneck, not the GPU"（`CLAUDE.md` 第 36 行、`设计依据.md` 第 78 行、`PLAN.md` §4 M3 行同此说法）**不成立** | M3 实测：向量化后在默认 `G = N/4` 下 `env.step` 只占整环路 0.3–0.8%，梯度更新占 98–99%；即使 `G = 1` 环境也只占 11%。后半句"不在 GPU"成立——单次更新约 2 ms 且与 batch 大小基本无关，是 CPU 侧的调用开销。准确说法：**瓶颈是梯度更新次数**。`PLAN.md` §4 与 `CLAUDE.md` 第 36 行已改；Part B 是已提交文档不动，Part E 报告里按实测写 |
 | 2026-10-04 | 向量化环境的自动重置接口多了 `info["final_obs"]`，字段名与 PLAN §3.6 原文不同 | 原文只说"返回新局首观测"，照做会丢掉饥饿截断步的真实后继，DQN 无法对截断步 bootstrap。PLAN §3.6 已同步更新；Part B 没有写到这一层，不算偏离其承诺 |
 
 ## 会话日志
@@ -165,3 +166,4 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 - 2026-09-30：M2 完成。`agents/__init__.py`（Policy 协议）、`agents/baselines.py`、`evaluate.py`（含 CLI）、`utils.py`、`common.heading_to_action`、`tests/test_baselines.py`（30 测试）。验收表已录入。
 - 2026-10-04：上次会话非正常关闭；检查后确认磁盘无丢失（工作区干净，M3 未开始）。M2 的 commit 由用户 push。确认 Part C 需要做到 M5（经 M3、M4）；Part B 时间表里 Week 8 还写了 "DQN with CNN (representation B) running"，那是 M6 前半截——截止前有余量就补一个 CNN-on-B 单次训练，来不及就按 M5 交并在上表记偏离。
 - 2026-10-04：M3 完成（commit `b60a2e6`）。`snake_rl/env/vec_env.py`（`VecSnakeEnv`，405 行）、`tests/test_vec_env.py`（97 项）、`scripts/bench_vec_env.py`、`snake_rl/env/__init__.py` 导出 `VecSnakeEnv`；`PLAN.md` §3.6 与 §4 M3 行同步更新。顺带补了 `tests/test_env.py::test_set_state_validation` 的缺口（原来的非相邻用例只靠 `infer_heading` 的副作用报错，没有钉住相邻性检查本身）。本文件修了三处旧毛病：M0 行的 remote 地址、"待拍板"表丢失的标题、会话日志 M1/M2 顺序。做法：测试与实现各由一个 agent 按同一规格独立编写，再做四路对抗式审查（差分 fuzz、逐行审查、M5 数据通路探针、测试门禁与基准审计），每条发现由另一个 agent 尝试证伪；未发现引擎 bug，采纳的修改都是加固（`obs`/`final_obs` 不再共享内存、`set_state` 与 `reset(seed=)` 的异常安全、补测试）。
+- 2026-10-04：用户拍板两项（见"待拍板"表）：批准把 `CLAUDE.md` 第 36 行的瓶颈说法改为实测结论（已改）；M5 的 G 与 batch 按"冒烟时两种配置各跑一条曲线再定"执行。

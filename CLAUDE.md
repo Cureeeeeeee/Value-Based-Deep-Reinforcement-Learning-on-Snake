@@ -33,7 +33,7 @@ UTS 43008 Reinforcement Learning（Spring 2026）Assignment 3 团队项目，项
 
 - Windows 11；Python 3.13.7；虚拟环境 `.venv`（仓库根目录）。
 - GPU：RTX 5090（Blackwell, sm_120）→ 需要 PyTorch ≥ 2.7 的 CUDA 12.8 wheel（`pip install torch --index-url https://download.pytorch.org/whl/cu128`；以官网当前指引为准）。M0 第一步：`python -c "import torch; print(torch.__version__, torch.cuda.is_available())"` 必须打印 `True`。
-- 训练吞吐瓶颈在 Python 环境步进，不在 GPU（`PLAN.md` §0.5、§3.6）：128–256 个并行环境 + 显式的"梯度步数/vec-step"参数（默认 N_envs/4）。
+- 训练吞吐瓶颈在**梯度更新次数**（每次约 2 ms 的 CPU 侧调用开销，与 batch 大小基本无关），不在环境步进也不在 GPU 算力（M3 实测：默认配置下 `env.step` 只占整环路 <1%，见 `docs/PROGRESS.md` 的"M3 验收"）。墙钟预算 ≈ 更新次数 × 约 2 ms（观测 A）/ 3 ms（B 8 平面）。128–256 个并行环境（B 8 平面用 128）+ 显式的"梯度步数/vec-step"参数（默认 N_envs/4，`PLAN.md` §0.5）。
 - 跑测试：`pytest -q`。跑冒烟：`python -m snake_rl.train --config configs/smoke_8x8.yaml`（M5 后存在）。
 - 长时间训练（>10 分钟）不要在 Claude Code 的前台跑：生成命令，让用户在独立终端后台跑，之后只读 `runs/` 分析。
 
