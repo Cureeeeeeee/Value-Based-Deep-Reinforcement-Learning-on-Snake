@@ -26,26 +26,39 @@ however wrong the estimate is (the "error clipping" of Mnih et al. 2015).
 
 This is the tabular update of ``tabular_q.py`` with the table lookup replaced
 by a network and the step ``alpha * td`` replaced by a gradient step on a
-regression loss. Two consequences of the replacement motivate the two
-stabilisers below: a gradient step on one input changes the values of other
-inputs as well, and the regression target is computed from the function being
-fitted.
+regression loss. One consequence of the replacement motivates both stabilisers
+below: a gradient step on one input changes the values of other inputs as
+well. The table also computes its target from the values it is updating, but
+an update to one cell leaves every other cell unchanged; in the network the
+update for ``(s, a)`` also moves the value of the successor ``s'`` from which
+its own target is computed.
 
 Replay buffer - what it is for
 ------------------------------
 Stochastic gradient descent assumes samples that are roughly independent and
 come from one distribution. Consecutive transitions of a game are neither:
-successive boards differ by one cell, and the distribution of visited states
-changes whenever the greedy policy changes. Training on the stream as it
+successive positions of one game differ by the head cell and the tail cell,
+and the distribution of visited states changes whenever the greedy policy
+changes. Training on the stream as it
 arrives pulls the network towards the most recent moments of play, at the
 expense of what it learned before. The buffer (``replay.py``) keeps the most recent
 ``buffer_size`` transitions and every gradient step draws a uniform batch from
 it: a batch mixes many episodes and many past policies, and a transition is
-reused for several steps. The ``n_envs`` parallel boards already decorrelate
-one vec-step across boards; they do not remove the correlation over time or
-the drift with the current policy. Sampling old transitions is only valid
-because Q-learning is off-policy: the target takes the max over actions and so
-does not depend on the policy that collected the data.
+drawn many times before it leaves the buffer (64 times on average in the
+shipped configurations: 32 batches of 256 per 128 collected transitions). The
+``n_envs`` parallel boards already decorrelate one vec-step across boards;
+they do not remove the correlation over time or the drift with the current
+policy.
+
+Sampling old transitions is admissible because Q-learning is off-policy: the
+target of a stored transition takes the max over the successor's actions and
+does not involve the action the old policy took next, so the transition does
+not go stale (a SARSA target would). The data distribution still matters. With
+function approximation the weights the regression settles on depend on which
+states and actions the buffer holds - the off-policy element of the deadly
+triad below. And on observation A a code is not a Markov state, so the average
+reward and successor of a (code, action) pair depend on the policy that
+collected the data.
 
 Target network - what it is for
 -------------------------------
@@ -54,17 +67,24 @@ with every step on ``theta``, and often in the same direction as ``q_sa``,
 because ``s`` and ``s'`` are similar inputs. The regression chases a target
 that it moves itself, which can oscillate or diverge. The target network
 freezes the target: ``theta^-`` is an exact copy of ``theta`` made every
-``target_update_every`` gradient steps, so between two copies the problem is
-an ordinary regression on fixed targets. ``target_update_every = 1`` copies
-after every step: no separate target network in effect.
+``target_update_every`` gradient steps, so between two copies the target
+function is fixed and the problem is a regression towards it (the buffer keeps
+changing). ``target_update_every = 1`` copies after every step: no separate
+target network in effect.
 
-Both devices respond to the "deadly triad" (Sutton & Barto 2018, section
-11.3): function approximation, bootstrapping and off-policy training together
-can make value estimates diverge, and DQN combines all three. Replay and the
-target network are the two remedies of Mnih et al. (2015); neither comes with
-a convergence guarantee, and nothing here claims one. The project measures
-what each contributes on Snake by removing them (M6: +-replay, +-target
-network).
+DQN combines the three elements of the "deadly triad" (Sutton & Barto 2018,
+section 11.3) - function approximation, bootstrapping and off-policy training
+- which together can make value estimates diverge. Neither device removes an
+element. The target network keeps the bootstrap but takes it from a delayed
+copy, so an update no longer moves its own target at once. Replay addresses a
+different problem, correlated and non-stationary samples, and makes the
+training data more off-policy, not less. Mnih et al. (2015) introduce the pair
+against the instability of Q-learning with a neural network, which they
+attribute to correlated observations, to a data distribution that shifts with
+the policy, and to the correlation between action values and their targets;
+replay itself goes back to Lin (1992). Neither comes with a convergence
+guarantee, and nothing here claims one. The project measures what each
+contributes on Snake by removing them (M6: +-replay, +-target network).
 
 terminated is not truncated
 ---------------------------
@@ -102,8 +122,9 @@ On observation A the network sees the same 11 binary features as
 ``TabularQAgent``, hence the same codes (at most 256 occur as a state the
 agent acts in), and every greedy policy it expresses is a function of that
 code - a policy the table can express too. A difference in score between the
-two is therefore a difference in learning dynamics (generalisation across
-codes, replay, target network, optimiser, loss), not in representation: what
+two is therefore a difference in how the action values are represented and
+learned (shared weights against one number per code, replay, target network,
+optimiser, loss, training data), not in the state representation: what
 observation A discards (body layout, distances) is as invisible to the network
 as to the table, so neither can represent the optimal action values of the
 game. If the network scores lower, limited capacity is not excluded by this
@@ -114,10 +135,13 @@ Acting
 Greedy ties go to the lowest action index (``np.argmax`` on the action values
 copied to the host). :meth:`DQNAgent.act` is :meth:`DQNAgent.act_batch` on a
 batch of one, so the two share one code path and one tie rule. The action
-values of one observation can differ in the last bit between batch sizes (the
-linear-algebra library picks its kernel by matrix size; measured 5e-8 on the
-CPU), so the two can disagree only where two action values coincide to within
-that rounding.
+values of one observation can differ in the last few bits between batch sizes
+(the linear-algebra library picks its kernel by matrix size; measured on the
+CPU: 5e-8 for an untrained network with ``|Q| < 0.2``, up to 1e-6 for the
+trained 8x8 networks with ``|Q|`` up to 2), so the two can disagree only where
+two action values coincide to within that rounding. No greedy action changed
+in the five final 8x8 models (smallest gap between the two best actions
+3.4e-4) or in their 205 checkpoints.
 """
 
 from __future__ import annotations

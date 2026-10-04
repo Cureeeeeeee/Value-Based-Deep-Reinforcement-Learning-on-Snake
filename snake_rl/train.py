@@ -124,10 +124,13 @@ reaches for run seeds below 42,948.) The same config and seed give identical
 DQN adds two streams: replay sampling draws from ``default_rng([seed, 2])``
 and the initial network weights are a function of the run seed
 (``DQNAgent(..., seed=seed)``, which leaves the global torch generator
-untouched). On the CPU the same config and seed give identical ``model.pt``
-tensors, ``final_eval.json`` episodes and ``metrics.csv`` (except the
-``time_*`` and ``wall_time_s`` columns), in the same process or a fresh one.
-Nothing is promised bit for bit on cuda.
+untouched). On the CPU the same config and seed give, on one machine and
+torch build, identical ``model.pt`` tensors, ``final_eval.json`` episodes and
+``metrics.csv`` (except the ``time_*`` and ``wall_time_s`` columns), in the
+same process or a fresh one. Another CPU or BLAS code path changes the
+rounding and, through it, the whole run: a re-run elsewhere gives other
+weights and per-seed scores from the same distribution. Nothing is promised
+bit for bit on cuda.
 
 metrics.csv (tabular Q-learning)
 --------------------------------

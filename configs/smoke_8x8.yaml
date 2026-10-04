@@ -3,7 +3,7 @@
 # of 20 episodes. It finishes in seconds (most of it the torch import) and exercises every
 # file of a DQN run directory (config.yaml, metrics.csv, checkpoints/, model.pt,
 # final_eval.json). Not a result: the budget is far too small to say anything about the
-# agent. The CPU and a single thread make the run reproducible bit for bit.
+# agent. The CPU and a single thread make the run repeatable bit for bit on one machine.
 #
 # Run (writes runs/smoke_dqn_W8/0/; a run directory is never overwritten, so pick another
 # --seed or --exp to run it again):

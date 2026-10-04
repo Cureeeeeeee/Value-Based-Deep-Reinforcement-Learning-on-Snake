@@ -8,7 +8,8 @@
 # docs/PROGRESS.md); Part B's initial value was 0.99. device / torch_threads: on this
 # 2 x 256 MLP one gradient step is dominated by per-call overhead, and the CPU is about
 # three times faster per step than the GPU (M5 measurement, docs/PROGRESS.md); CPU runs
-# are also bit-for-bit reproducible. eval_every is 12,800 because the greedy score
+# are also repeatable bit for bit on one machine and torch build (not across machines).
+# eval_every is 12,800 because the greedy score
 # reaches its plateau within the first 50,000 steps. Everything else in the agent block
 # is the DQNConfig default (snake_rl/agents/dqn/config.py), written out.
 #
@@ -44,7 +45,7 @@ agent:
   hidden: [256, 256]
   double: false                  # Double DQN is studied in M7
   keep_checkpoints: true         # weights-only checkpoint at every evaluation
-  device: cpu                    # faster than cuda for this small MLP, and deterministic
+  device: cpu                    # faster than cuda for this small MLP; repeatable bit for bit on one machine
   torch_threads: 2               # five seeds in parallel use 10 of the 16 logical cores
 train:
   n_envs: 128
