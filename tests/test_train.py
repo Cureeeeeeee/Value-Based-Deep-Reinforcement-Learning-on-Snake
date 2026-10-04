@@ -240,9 +240,13 @@ def snapshot(directory: Path) -> dict:
 
 # =================================================================== config
 SHIPPED = {
-    "tabular_q_8x8.yaml": dict(exp="tabular_q_W8", W=8, n_envs=50, total=500_000, every=25_000, episodes=100),
-    "tabular_q_10x10.yaml": dict(exp="tabular_q_W10", W=10, n_envs=50, total=1_000_000, every=50_000, episodes=100),
-    "smoke_tabular.yaml": dict(exp="smoke_tabular", W=8, n_envs=16, total=32_000, every=8_000, episodes=20),
+    # gamma 0.9 on the two boards: chosen by the 8x8 sweep of M4 (docs/PROGRESS.md).
+    "tabular_q_8x8.yaml": dict(exp="tabular_q_W8", W=8, gamma=0.9, n_envs=50, total=500_000, every=25_000,
+                               episodes=100),
+    "tabular_q_10x10.yaml": dict(exp="tabular_q_W10", W=10, gamma=0.9, n_envs=50, total=1_000_000, every=50_000,
+                                 episodes=100),
+    "smoke_tabular.yaml": dict(exp="smoke_tabular", W=8, gamma=0.99, n_envs=16, total=32_000, every=8_000,
+                               episodes=20),
 }
 
 
@@ -255,7 +259,8 @@ def test_shipped_config_files_load(name):
         env=EnvConfig(W=want["W"], action_mode="relative", starve_limit=None, obs=ObsConfig(kind="A"),
                       reward=RewardConfig(variant="R0")),
         agent_kind="tabular_q",
-        agent=TabularQConfig(alpha=0.1, gamma=0.99, eps_start=1.0, eps_end=0.05, eps_decay_fraction=0.2, q_init=0.0),
+        agent=TabularQConfig(alpha=0.1, gamma=want["gamma"], eps_start=1.0, eps_end=0.05, eps_decay_fraction=0.2,
+                             q_init=0.0),
         train=TrainConfig(n_envs=want["n_envs"], total_env_steps=want["total"], eval_every=want["every"],
                           eval_episodes=want["episodes"], eval_seed=10_000),
     )

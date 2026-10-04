@@ -3,7 +3,11 @@
 # M4 acceptance check ("clearly beats the random player within minutes") and
 # the first stop of a hyper-parameter sweep before moving to 10x10.
 #
-# alpha / gamma / epsilon are starting points, not tuned values.
+# alpha / gamma / epsilon come from the 8x8 sweep of M4 (docs/PROGRESS.md; runs under
+# runs/sweep_tabular_W8/, sweep seeds 10-14, disjoint from the report seeds 0-4): the final
+# greedy score is flat for alpha 0.1-0.3, gamma 0.8-0.95 and every epsilon schedule tried;
+# only gamma = 0.99 is worse (lower mean, wider spread over seeds, greedy policies that loop
+# until the starvation limit).
 #
 # Run one seed (about 5 s on the development machine; writes runs/tabular_q_W8/<seed>/):
 #   python -m snake_rl.train --config configs/tabular_q_8x8.yaml --seed 0
@@ -21,7 +25,7 @@ env:
 agent:
   kind: tabular_q
   alpha: 0.1
-  gamma: 0.99
+  gamma: 0.9                # see the sweep note above; Part B's initial value was 0.99
   eps_start: 1.0
   eps_end: 0.05
   eps_decay_fraction: 0.2   # epsilon reaches eps_end after 20 % of total_env_steps
