@@ -322,7 +322,7 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 
 ## Part D（环境 / GUI 设计）
 
-成品 `..\43008-Project-Part-D-TheDeadlyTriad.docx`（4 页，套用 `Project-Part-D.docx` 模板；同目录有 LibreOffice 渲染的 PDF），正文源 `docs/PartD-environment-gui.md`，排版脚本 `runs/review/partd/build_partd.py` + `render.py`（不进 git；按 Part C 的脚本改）。内容：环境说明（棋盘与动力学、动作、终止与截断、观测 A / B、奖励 R0–R3、标量与向量化两套实现及等价门禁、自带玩家与 Part C 分数）；GUI 类型（自建环境 + 自写 pygame 界面）+ 实现与测试 + 偏离 Part B 三条；四张截图及说明（人玩 + 表格 Q 顾问、agent 玩、局终死因与统计、回放）。截图由应用自身在 dummy 驱动下渲染，`python scripts/gui_screenshots.py` 重生成得到逐字节相同的帧（种子固定；图注里引用的分数与 Q 值均读自这些帧）。docx 结构校验通过（docx skill 的 `validate.py`）。
+成品 `..\43008-Project-Part-D-TheDeadlyTriad.docx`（4 页，套用 `Project-Part-D.docx` 模板；同目录有 LibreOffice 渲染的 PDF），正文源 `docs/PartD-environment-gui.md`，排版脚本 `runs/review/partd/build_partd.py` + `render.py`（不进 git；按 Part C 的脚本改）。内容：环境说明（棋盘与动力学、动作、终止与截断、观测 A / B、奖励 R0–R3、标量与向量化两套实现及等价门禁、自带玩家与 Part C 分数）；GUI 类型（自建环境 + 自写 pygame 界面）+ 实现与测试；四张截图及说明（人玩 + 表格 Q 顾问、agent 玩、局终死因与统计、回放）。截图由应用自身在 dummy 驱动下渲染，`python scripts/gui_screenshots.py` 重生成得到逐字节相同的帧（种子固定；图注里引用的分数与 Q 值均读自这些帧）。docx 结构校验通过（docx skill 的 `validate.py`）。 2026-10-12 按用户指示删除了文档里的"Differences from the Part B plan"一段；偏离只记在本文件的"偏离 Part B 的记录"。
 
 ## 待拍板（默认值已按此实现或将按此实现；未收到反对即视为定案）
 
@@ -377,8 +377,8 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | 2026-10-05 | **事实更正**：Part B “DQN on representation A must match tabular Q-learning” 把“持平”当作 DQN 实现正确的检验 | 持平成立，但它检验不了多少东西：γ=0 的表格也到同一水平，所以观测 A 上的得分对“是否学到多步价值”不敏感。实现正确性的证据是测试（与教科书 DQN 循环的权重一致、截断规则的 spy），不是这个得分 |
 | 2026-10-05 | Part B 承诺的“中断后从 checkpoint 续训”没有实现 | `checkpoints/` 只存权重；续训还需要 buffer、RNG 流和环境状态。DQN-A 的 run 只有 5–11 分钟，重跑比续训便宜。M6 的 CNN 如果单个 run 变成小时级再做 |
 | 2026-10-05 | Part B 时间表 Week 8 的 “DQN with CNN (representation B) running; initial comparison table; repository link (Part C)” 只兑现了后两项 | CNN 尚未实现（M6）。Part C 文档里明说了，并用 γ=0 对照的结果说明为什么下一步必须转到观测 B。仓库链接已写进文档，但仓库在 2026-10-05 仍是 PRIVATE，需用户处理 |
-| 2026-10-12 | M9（GUI）先于 M6（CNN）完成，PLAN §4 的顺序 M6 → M9 调换 | Part D 截止在前，模板要求"实际 GUI 的截图"；GUI 只依赖标量环境和已有的玩家，不依赖 CNN。Part D 文档里写明了 CNN 是下一项 |
-| 2026-10-12 | GUI 的 checkpoint / 观测模式在命令行选择，不是侧栏单选钮；访问热力图叠加未实现；观测 A 特征条与人玩顾问是 mock-up 没有的新增 | 侧栏控件成本高、答辩价值低；热力图的数据来自 M8 的行为分析，届时一并做。三条都写进了 Part D 文档 |
+| 2026-10-12 | M9（GUI）先于 M6（CNN）完成，PLAN §4 的顺序 M6 → M9 调换 | Part D 截止在前，模板要求"实际 GUI 的截图"；GUI 只依赖标量环境和已有的玩家，不依赖 CNN。偏离只记在此（Part D 文档的偏离说明段按用户指示删除） |
+| 2026-10-12 | GUI 的 checkpoint / 观测模式在命令行选择，不是侧栏单选钮；访问热力图叠加未实现；观测 A 特征条与人玩顾问是 mock-up 没有的新增 | 侧栏控件成本高、答辩价值低；热力图的数据来自 M8 的行为分析，届时一并做。三条只记在此（文档的偏离说明段按用户指示删除） |
 
 ## 会话日志
 
@@ -395,4 +395,4 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 - 2026-10-05：过程记录。（1）10×10 的 5 种子训练按 `CLAUDE.md` 应由用户在独立终端跑，命令给了用户；用户先说“暂停”、后说“继续”，期间没有跑，我就在后台分两批跑了，第一批用了 10.7 分钟（超过 10 分钟线），已在对话里报告。（2）用户说“stop 暂停”时我停掉了正在跑的审查工作流和 γ=0.99 批次，留下 `runs/dqn_A_W8_g099/` 5 个未完成的 run 目录（没有删，按规则也不能删）；继续后用新名字 `dqn_A_W8_gamma099` 重跑。（3）跑训练时显卡被 `cs2.exe` 占用，所有 GPU 计时都不是空闲条件下的。
 - 2026-10-05：Part C 文档完成（`..\43008-Project-Part-C-TheDeadlyTriad.docx`，3 页）。先写正文（`docs/PartC-initial-results.md`），再用 6 个 agent 做三路检查加复核，改稿后再做终稿事实复查和校对；确认的问题共约 45 条，其中 1 条是事实错误（γ=0 对照在 10×10 上有 5 局不是“无路可走才死”），其余是说过头、与 Part B 对不上、指代不清和篇幅。用课程模板排版（解包模板、替换三处红色占位段、填表头、插图、加超链接），docx 结构校验通过。过程中发现仓库是 PRIVATE，已告知用户。尝试用 Word 的 COM 自动化数页数时调用卡住，已停掉并清理掉我启动的那个 Word 进程，没有影响其他程序；页数以 LibreOffice 渲染和校对 agent 的 Word 导出为准。
 - 2026-10-08（Cowork）：用户上传 resources week06–10，并下达指令：任务代码以 resources 为基础，能原样用就原样用、尽量少改。新增 `docs/RESOURCE_BASELINE.md`，`CLAUDE.md` 加规则和先读项，待拍板加一行（适用范围）。**这些文档改动没有提交 git**；下次会话开始时先 commit：`docs: resource-first rule and RESOURCE_BASELINE (2026-10-08)`。
-- 2026-10-12：先提交了 2026-10-08 的文档改动（`7997035`）。核验进度后确认 Part D 模板要求实际 GUI 截图而 `gui/app.py` 仍是桩，于是把 M9 提前到 M6 之前做。做法：写规格（`M9_SPEC.md`，会话临时目录）→ 一个 agent 按规格独立写 `tests/test_gui.py`（56 项），我同时写 `app.py` → 集成：56 项里 1 项不过（规格里"人玩首个方向键是否取消暂停"两句互相矛盾），按测试的读法改实现 → 全量 1293 过。真实窗口冒烟一次（弹窗约 2 s，`--steps 40` 自动退出）。再写 `scripts/gui_screenshots.py` 出四张图，写 `docs/PartD-environment-gui.md`，按 Part C 的脚本改出 `runs/review/partd/build_partd.py`，模板排版 → 校验通过 → LibreOffice 渲染 4 页逐页看过（第一版"Screen shot(s)"标签孤立在页底，给它加了 keepNext）。`gh repo view`：仓库仍 PRIVATE。
+- 2026-10-12：先提交了 2026-10-08 的文档改动（`7997035`）。核验进度后确认 Part D 模板要求实际 GUI 截图而 `gui/app.py` 仍是桩，于是把 M9 提前到 M6 之前做。做法：写规格（`M9_SPEC.md`，会话临时目录）→ 一个 agent 按规格独立写 `tests/test_gui.py`（56 项），我同时写 `app.py` → 集成：56 项里 1 项不过（规格里"人玩首个方向键是否取消暂停"两句互相矛盾），按测试的读法改实现 → 全量 1293 过。真实窗口冒烟一次（弹窗约 2 s，`--steps 40` 自动退出）。再写 `scripts/gui_screenshots.py` 出四张图，写 `docs/PartD-environment-gui.md`，按 Part C 的脚本改出 `runs/review/partd/build_partd.py`，模板排版 → 校验通过 → LibreOffice 渲染 4 页逐页看过（第一版"Screen shot(s)"标签孤立在页底，给它加了 keepNext）。`gh repo view`：仓库仍 PRIVATE。 之后按用户指示删除文档里的偏离说明段，重排后仍 4 页、校验通过，成品已覆盖。
