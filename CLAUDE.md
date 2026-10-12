@@ -12,6 +12,7 @@ UTS 43008 Reinforcement Learning（Spring 2026）Assignment 3 团队项目，项
 
 ## 先读什么
 
+0. `docs/RESOURCE_BASELINE.md` — resource-first 规则（用户 2026-10-08 指令）在本仓库的适用范围和逐里程碑映射。**M6 起写任何新代码前先读。**
 1. `PLAN.md` — 冻结的环境契约（§3）、仓库结构（§2）、里程碑与验收标准（§4）、砍单顺序。**写任何代码前先读 §3。**
 2. `docs/PartB-submitted-plan.md` — 已提交给学校的实施计划，是我们对外的承诺；偏离它的地方必须在 `docs/PROGRESS.md` 里记"偏离 Part B：原因"。
 3. `docs/ASSESSMENT3-spec.md` — 官方评分要求（Part A–G；代码要以 Colab/IPython notebook + 仓库形式提交；GUI 要求）。
@@ -20,6 +21,7 @@ UTS 43008 Reinforcement Learning（Spring 2026）Assignment 3 团队项目，项
 
 ## 不可协商的规则
 
+- **Resource-first（用户 2026-10-08 指令）**：新代码以 `../../../resources/` 里 week06–10 的 Solution notebook 为基础；resource 代码能实现同样效果就原样采用，尽量少改。改动按 L0 原样 / L1 只改参数值 / L2 最小补丁 / L3 新增 分级，复用处在 docstring 里注明出处和改了什么。已完成、支撑 Part C 结果的 M0–M5 代码不按 resource 重写（默认，待用户确认）。逐里程碑映射见 `docs/RESOURCE_BASELINE.md`。
 - **环境契约冻结**：`PLAN.md` §3 的 `step` 执行顺序、`body_age` 语义、观测 A/B 定义、R0–R3 定义、饥饿截断规则是契约。要改，先改 `PLAN.md` 并在 `PROGRESS.md` 记录，再改代码。
 - **truncated ≠ terminated**：饥饿截断（`truncated=True`）的 DQN target 必须 bootstrap；只有撞墙/撞己（`terminated=True`）才把下一状态价值置零。饥饿截断不给 −1。
 - **标量环境与向量化环境逐步等价**：`tests/test_vec_env.py` 是回归门禁，任何环境改动后必须过。
