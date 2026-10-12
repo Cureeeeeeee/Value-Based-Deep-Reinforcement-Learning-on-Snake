@@ -61,10 +61,12 @@ snake_rl/
   utils.py       git hash and other reproducibility helpers
   analysis/      aggregate.py (results table and learning curves from run directories),
                  plots.py (evaluation-curve figure)
-  gui/app.py     pygame: human play / agent play with live Q-values / replay        [M9]
+  gui/app.py     pygame: human play (optionally with an advising agent) / agent play with the
+                 live action-value panel / replay of recorded episodes; headless screenshots
 tests/           pytest; the scalar-vs-vectorised equivalence test is the regression gate
 configs/         one yaml per experiment
-scripts/         check_env.py, bench_vec_env.py (throughput), run_matrix.py (seeds x grid batch runner)
+scripts/         check_env.py, bench_vec_env.py (throughput), run_matrix.py (seeds x grid batch runner),
+                 gui_screenshots.py (the Part D figures, rendered by the GUI without a window)
 notebooks/       Colab notebook regenerating the main figures from logs/checkpoints
 runs/            training outputs (not in git)
 ```
@@ -145,3 +147,22 @@ A table trained with gamma = 0 (no look-ahead) reaches the same level, so on
 these features the score reflects a reactive policy (avoid the blocked move,
 turn to the food), not multi-step value learning; `docs/PROGRESS.md` has the
 full analysis.
+
+## GUI (Part D)
+
+```powershell
+python -m snake_rl.gui.app                                        # human play on 10x10 (arrows / WASD; starts paused: one step per key, Space runs)
+python -m snake_rl.gui.app --player runs/dqn_A_W10/0              # the DQN of that run plays, live action values in the panel
+python -m snake_rl.gui.app --player runs/dqn_A_W10/0/checkpoints/step_00012800.pt   # any checkpoint
+python -m snake_rl.gui.app --mode human --player runs/tabular_q_W10/0   # human plays, the table advises
+python -m snake_rl.gui.app --player bfs --seed 10000               # reference players: random | bfs | hamiltonian
+python -m snake_rl.gui.app --replay runs/recordings/<file>.json    # re-simulate an episode saved with S
+python scripts/gui_screenshots.py                                  # the Part D figures, headless -> runs/figures/partD_gui_*.png
+```
+
+The GUI runs the scalar `SnakeEnv` with the configuration of the player's run
+(board, observation, action mode, reward). Episodes use the evaluation seeds
+(10000, 10001, ...), so a human and an agent can be compared on the same
+boards. Keys: Space pause, N step, R new game, S save the episode as a
+recording, + / - speed, Q quit. Headless operation (`--headless`, SDL dummy
+driver) is what the tests and the screenshot script use.

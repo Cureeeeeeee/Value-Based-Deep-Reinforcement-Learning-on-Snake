@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-**Part C 待提交 → 之后 M6**。M0–M2 完成于 2026-09-30，M3、M4 于 2026-10-04，M5 和 Part C 文档于 2026-10-05。Part C 的成品是 `..\43008-Project-Part-C-TheDeadlyTriad.docx`（3 页，套用课程模板；同目录有 LibreOffice 渲染的 PDF 预览），正文源文件是 `docs/PartC-initial-results.md`。**提交前用户要做两件事**：（1）仓库目前是 PRIVATE，文档里的仓库链接批改人打不开——公开仓库或把课程协调人加为协作者；（2）用 Word 打开确认仍是 3 页（我只用 LibreOffice 渲染过；一个校对 agent 用本机的 Word 16 导出过几乎相同的版本，3 页、第 3 页约剩 3 行）。Part C 之后是 M6（CNN on 观测 B；±replay ±target 消融），开工前先读“待拍板”表里标（M6）的各行。
+**Part D 待提交 → 之后 M6**。M0–M2 完成于 2026-09-30，M3、M4 于 2026-10-04，M5 和 Part C 文档于 2026-10-05，M9（GUI）和 Part D 文档于 2026-10-12（M9 提前到 M6 之前做，原因见"偏离 Part B 的记录"）。Part D 成品 `..\43008-Project-Part-D-TheDeadlyTriad.docx`（4 页，套用课程模板；同目录有 LibreOffice 渲染的 PDF 预览），正文源文件 `docs/PartD-environment-gui.md`，详见下方"Part D"一节。Part C 成品 `..\43008-Project-Part-C-TheDeadlyTriad.docx`（源 `docs/PartC-initial-results.md`）；Part C 是否已提交，本仓库没有记录。**提交前用户要做**：（1）仓库在 2026-10-12 仍是 PRIVATE（`gh repo view` 核实），两份文档里的仓库链接批改人打不开——公开仓库或把课程协调人加为协作者；（2）用 Word 打开确认页数（我只用 LibreOffice 渲染过）；（3）push。之后是 M6（CNN on 观测 B；±replay ±target 消融），开工前先读 `docs/RESOURCE_BASELINE.md` 和"待拍板"表里标（M6）的各行。
 
 ## 里程碑清单
 
@@ -19,7 +19,7 @@
 | M6 | CNN on B（8 平面 / 3 平面）；±replay ±target 消融 | ☐ | |
 | M7 | Double DQN + 过估计测量；Dueling；PER | ☐ | PER 最先砍 |
 | M8 | 奖励轴 R0–R3 + 行为分析 | ☐ | |
-| M9 | pygame GUI 三模式 | ☐ | → Part D |
+| M9 | pygame GUI 三模式 | ✅ 2026-10-12 | `pytest`：1293 passed（+56，`tests/test_gui.py`，无头 SDL dummy 驱动，4 s）。验收达成：人玩（方向键 / WASD；默认逐步、Space 实时；可挂"顾问"agent 显示其 Q 值）+ agent 玩（基线 / Q 表 / 任意 DQN checkpoint；实时三动作 Q 值条形图与所选动作、观测 A 的 11 位、分数 / 饥饿计数 / 回报 / 本会话死因统计）+ 回放（JSON 录像 = 环境配置 + 种子 + 动作序列 + 每步 Q 值，重新模拟）。真实窗口冒烟通过。截图：`python scripts/gui_screenshots.py` → `runs/figures/partD_gui_*.png`。→ Part D 已交付。详见下方"M9 实现层面的决定" |
 | M10 | 矩阵批量（5 种子）、`analysis/` 全部图表、Colab notebook | ☐ | → Part E |
 
 ## M1 实现层面的决定（PLAN §3 之外，代码即文档）
@@ -305,6 +305,25 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 - **与 Part B 的差别**（文档里已写明）：γ 0.9；DQN 在 CPU 上训练；环境步进不是瓶颈；CNN（观测 B）尚未实现——Part B 时间表里 Week 8 的 “DQN with CNN (representation B) running” 没有兑现，见“偏离 Part B 的记录”。
 - **没有进文档的**：10×10 上 DQN 死亡记为 wall 的比例高于表格 Q；G=4 / G=1 的回放比对照；网络与表格逐格比较；这些留给最终报告。
 
+## M9 实现层面的决定
+
+| 项 | 决定 | 影响 |
+|---|---|---|
+| 代码结构 | `GameSession`（无 pygame 的游戏模型：环境、玩家、计数、录像）/ `App`（绘制 + 事件循环）/ CLI，都在 `gui/app.py`（约 1,000 行）；新增 `scripts/gui_screenshots.py` | 与 PLAN §2 一致（只有 `gui/app.py`）；模型层可无头测试 |
+| 人玩模式的节奏 | 启动即暂停：方向键每按一次走一步；Space 切换实时（默认 6 步/s，+/− 按 1.5 倍调速）；反向键忽略（保持直行） | 逐步模式配合顾问侧栏适合答辩讲解；实时模式是经典玩法。规格原文两句互相矛盾（首个方向键是否取消暂停），按独立写的测试的读法定 |
+| 种子 | 第一局 `DEFAULT_SEED = 10000`（评估棋盘 0），之后每局 +1 | 人和 agent 可在同一张棋盘上比较；与评估协议同一批棋盘 |
+| Q 值来源 | `action_values(player, obs)`：DQN → `q_values`，表格 → `q[state_index]`，基线 / 人 → None；人玩可挂顾问（`--mode human --player ...`，只显示不操作） | 侧栏与 agent 的决策同源（同一向量的 argmax，平局取最小下标；测试断言 `chosen == player.act`） |
+| 回放的实现 | 录像 = `{env, seed, player, actions, q_values, score, steps, cause}` JSON；回放用 `RecordedPlayer` 走 agent 模式重新模拟，动作用尽时 `cause = "end"`（不计入统计） | 环境给定种子与动作序列确定（测试：回放得到同样的 score / steps / cause）；170 步约 15 KB；回放不需要加载模型 |
+| 局终显示 | 侧栏保留"最后一步之前"的 Q 值与所选动作；撞己格涂红，撞墙在头格描红边；agent 模式 1.2 s 后自动开下一局，人玩 / 回放等 R | 答辩时能解释"它为什么选了致命的一步"（Part D 图 3：三个值都约 −1） |
+| 环境配置来源 | `--player` 指向 run 目录或 checkpoint 时，从该 run 的 `config.yaml`（同目录或上一级）取 `EnvConfig`（W、观测、动作模式、奖励）；`--W / --action-mode / --starve-limit` 显式给出才覆盖；checkpoint 的 `obs_shape` / `n_actions` 与环境不符 → 退出码 2 | 不会出现模型与观测不匹配的静默错误；GUI 里的回报与训练奖励同口径 |
+| 无头运行 | `--headless`（SDL dummy）+ `--steps N --screenshot PATH`；无头模式每帧走一步，不睡眠；无头人玩给了 `--steps` 就自动取消暂停（直行） | 测试与截图脚本都走这条路；截图可复现（种子 + CPU 上的 DQN 确定） |
+| Resource-first | 主循环按 W8 Part C cell 22 / W9 Part B cell 28 的 `run_game` 组织（reset → 人输入或 argmax Q → step → render → 结束信息），无逐字复用（那是 `input()` 的井字棋控制台循环）；其余 L3 | 见 `docs/RESOURCE_BASELINE.md` M9 行；`app.py` 模块 docstring 已注明 |
+| 未做 | 侧栏内切换 checkpoint / 观测模式（mock-up 的单选钮）、访问热力图叠加 | 记入"偏离 Part B"；热力图随 M8 行为分析一起做 |
+
+## Part D（环境 / GUI 设计）
+
+成品 `..\43008-Project-Part-D-TheDeadlyTriad.docx`（4 页，套用 `Project-Part-D.docx` 模板；同目录有 LibreOffice 渲染的 PDF），正文源 `docs/PartD-environment-gui.md`，排版脚本 `runs/review/partd/build_partd.py` + `render.py`（不进 git；按 Part C 的脚本改）。内容：环境说明（棋盘与动力学、动作、终止与截断、观测 A / B、奖励 R0–R3、标量与向量化两套实现及等价门禁、自带玩家与 Part C 分数）；GUI 类型（自建环境 + 自写 pygame 界面）+ 实现与测试 + 偏离 Part B 三条；四张截图及说明（人玩 + 表格 Q 顾问、agent 玩、局终死因与统计、回放）。截图由应用自身在 dummy 驱动下渲染，`python scripts/gui_screenshots.py` 重生成得到逐字节相同的帧（种子固定；图注里引用的分数与 Q 值均读自这些帧）。docx 结构校验通过（docx skill 的 `validate.py`）。
+
 ## 待拍板（默认值已按此实现或将按此实现；未收到反对即视为定案）
 
 | 项 | 默认 | 理由 |
@@ -358,6 +377,8 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | 2026-10-05 | **事实更正**：Part B “DQN on representation A must match tabular Q-learning” 把“持平”当作 DQN 实现正确的检验 | 持平成立，但它检验不了多少东西：γ=0 的表格也到同一水平，所以观测 A 上的得分对“是否学到多步价值”不敏感。实现正确性的证据是测试（与教科书 DQN 循环的权重一致、截断规则的 spy），不是这个得分 |
 | 2026-10-05 | Part B 承诺的“中断后从 checkpoint 续训”没有实现 | `checkpoints/` 只存权重；续训还需要 buffer、RNG 流和环境状态。DQN-A 的 run 只有 5–11 分钟，重跑比续训便宜。M6 的 CNN 如果单个 run 变成小时级再做 |
 | 2026-10-05 | Part B 时间表 Week 8 的 “DQN with CNN (representation B) running; initial comparison table; repository link (Part C)” 只兑现了后两项 | CNN 尚未实现（M6）。Part C 文档里明说了，并用 γ=0 对照的结果说明为什么下一步必须转到观测 B。仓库链接已写进文档，但仓库在 2026-10-05 仍是 PRIVATE，需用户处理 |
+| 2026-10-12 | M9（GUI）先于 M6（CNN）完成，PLAN §4 的顺序 M6 → M9 调换 | Part D 截止在前，模板要求"实际 GUI 的截图"；GUI 只依赖标量环境和已有的玩家，不依赖 CNN。Part D 文档里写明了 CNN 是下一项 |
+| 2026-10-12 | GUI 的 checkpoint / 观测模式在命令行选择，不是侧栏单选钮；访问热力图叠加未实现；观测 A 特征条与人玩顾问是 mock-up 没有的新增 | 侧栏控件成本高、答辩价值低；热力图的数据来自 M8 的行为分析，届时一并做。三条都写进了 Part D 文档 |
 
 ## 会话日志
 
@@ -374,3 +395,4 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 - 2026-10-05：过程记录。（1）10×10 的 5 种子训练按 `CLAUDE.md` 应由用户在独立终端跑，命令给了用户；用户先说“暂停”、后说“继续”，期间没有跑，我就在后台分两批跑了，第一批用了 10.7 分钟（超过 10 分钟线），已在对话里报告。（2）用户说“stop 暂停”时我停掉了正在跑的审查工作流和 γ=0.99 批次，留下 `runs/dqn_A_W8_g099/` 5 个未完成的 run 目录（没有删，按规则也不能删）；继续后用新名字 `dqn_A_W8_gamma099` 重跑。（3）跑训练时显卡被 `cs2.exe` 占用，所有 GPU 计时都不是空闲条件下的。
 - 2026-10-05：Part C 文档完成（`..\43008-Project-Part-C-TheDeadlyTriad.docx`，3 页）。先写正文（`docs/PartC-initial-results.md`），再用 6 个 agent 做三路检查加复核，改稿后再做终稿事实复查和校对；确认的问题共约 45 条，其中 1 条是事实错误（γ=0 对照在 10×10 上有 5 局不是“无路可走才死”），其余是说过头、与 Part B 对不上、指代不清和篇幅。用课程模板排版（解包模板、替换三处红色占位段、填表头、插图、加超链接），docx 结构校验通过。过程中发现仓库是 PRIVATE，已告知用户。尝试用 Word 的 COM 自动化数页数时调用卡住，已停掉并清理掉我启动的那个 Word 进程，没有影响其他程序；页数以 LibreOffice 渲染和校对 agent 的 Word 导出为准。
 - 2026-10-08（Cowork）：用户上传 resources week06–10，并下达指令：任务代码以 resources 为基础，能原样用就原样用、尽量少改。新增 `docs/RESOURCE_BASELINE.md`，`CLAUDE.md` 加规则和先读项，待拍板加一行（适用范围）。**这些文档改动没有提交 git**；下次会话开始时先 commit：`docs: resource-first rule and RESOURCE_BASELINE (2026-10-08)`。
+- 2026-10-12：先提交了 2026-10-08 的文档改动（`7997035`）。核验进度后确认 Part D 模板要求实际 GUI 截图而 `gui/app.py` 仍是桩，于是把 M9 提前到 M6 之前做。做法：写规格（`M9_SPEC.md`，会话临时目录）→ 一个 agent 按规格独立写 `tests/test_gui.py`（56 项），我同时写 `app.py` → 集成：56 项里 1 项不过（规格里"人玩首个方向键是否取消暂停"两句互相矛盾），按测试的读法改实现 → 全量 1293 过。真实窗口冒烟一次（弹窗约 2 s，`--steps 40` 自动退出）。再写 `scripts/gui_screenshots.py` 出四张图，写 `docs/PartD-environment-gui.md`，按 Part C 的脚本改出 `runs/review/partd/build_partd.py`，模板排版 → 校验通过 → LibreOffice 渲染 4 页逐页看过（第一版"Screen shot(s)"标签孤立在页底，给它加了 keepNext）。`gh repo view`：仓库仍 PRIVATE。
