@@ -363,7 +363,7 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 
 **B 上的消融批次**：`dqn_B7_W8` → `dqn_B8_W8_noreplay` → `dqn_B8_W8_notarget` → `dqn_B3_W8` → `dqn_B8_W8_noreplay_notarget`（各 5 种子，后台队列）。跑完后用会话临时目录的 `m6_tables.sh 8` 重出 `runs/tables/m6_W8_{obs,components}.md` 和两张图，结果填在这里。10×10 的同一组批次在 8×8 之后。
 
-**git hash 的说明**：`dqn_A_W8_noreplay`、`dqn_A_W8_noreplay_notarget` 和 `dqn_B8_W8` 这 15 个 run 的 `config.yaml` 记的是 `d81a7f3+dirty`。原因：提交 `d81a7f3` 之后我把 `tests/test_dqn.py` 的行尾从 CRLF 改成 LF（测试 agent 写出的文件带 CRLF；`.gitattributes` 规定 LF），批次启动的那一刻 `git status` 把它报成已修改，几秒后再查 `git diff` 为空。这些 run 的代码与 `d81a7f3` 逐字节相同；没有停掉重跑，因为中止训练进程的操作被拒绝，而且差别只是一个测试文件的行尾。之后的批次记的是干净的 hash。
+**git hash 的说明**：`dqn_A_W8_noreplay`、`dqn_A_W8_noreplay_notarget`、`dqn_B8_W8` 和 `dqn_B7_W8` 这 20 个 run 的 `config.yaml` 记的是 `d81a7f3+dirty`。原因：提交 `d81a7f3` 之后我把 `tests/test_dqn.py` 的行尾从 CRLF 改成 LF（测试 agent 写出的文件带 CRLF；`.gitattributes` 规定 LF；提交时 git 已把它规范成 LF 存入索引），此后 `git status` 一直把这个文件报成已修改，直到 `git add tests/test_dqn.py` 刷新了索引的 stat 信息（`git ls-files --eol`：索引与工作区都是 LF，`git diff` 为空，没有任何东西可提交）。这些 run 的代码与 `d81a7f3` 逐字节相同。没有停掉重跑：中止训练进程的操作被拒绝，而且差别只是索引的 stat 缓存。之后的批次记的是干净的 hash（`b6c096d` 起，只有文档改动）。
 
 **测试有效性**：`tests/` 的 M6 部分与实现由不同 agent 按同一规格（`M6_SPEC.md`，会话临时目录）独立编写；集成时 8 项不过，全是实现与规格的差异（冒烟配置改值后的期望值、B 配置注释缺一句、`aggregate` 的"先警告再报错"约定、CLI 路径没传中止计数），没有测试本身的错误。独立写的无回放参照循环逐位复现 `train`；spy 确认无回放时每个 vec-step 的转移恰好送进一次 `update`、`sample_rng` 从未被抽取；CNN 的前向与用 `F.conv2d` 手写的参照在 1e-5 内一致；M5 之前的 checkpoint 用新字段的默认值加载。全量 1399 项（M5 后 1293 项）。
 
