@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-**Part D 待提交 → 之后 M6**。M0–M2 完成于 2026-09-30，M3、M4 于 2026-10-04，M5 和 Part C 文档于 2026-10-05，M9（GUI）和 Part D 文档于 2026-10-12（M9 提前到 M6 之前做，原因见"偏离 Part B 的记录"）。Part D 成品 `..\43008-Project-Part-D-TheDeadlyTriad.docx`（4 页，套用课程模板；同目录有 LibreOffice 渲染的 PDF 预览），正文源文件 `docs/PartD-environment-gui.md`，详见下方"Part D"一节。Part C 成品 `..\43008-Project-Part-C-TheDeadlyTriad.docx`（源 `docs/PartC-initial-results.md`）；Part C 是否已提交，本仓库没有记录。**提交前用户要做**：（1）仓库在 2026-10-12 仍是 PRIVATE（`gh repo view` 核实），两份文档里的仓库链接批改人打不开——公开仓库或把课程协调人加为协作者；（2）用 Word 打开确认页数（我只用 LibreOffice 渲染过）；（3）push。之后是 M6（CNN on 观测 B；±replay ±target 消融），开工前先读 `docs/RESOURCE_BASELINE.md` 和"待拍板"表里标（M6）的各行。
+**M6 代码完成（2026-10-20，`d81a7f3`），B 上的 5 种子批次在跑 → 跑完填"M6 验收"、出图、提交文档 → M7**。M0–M2 完成于 2026-09-30，M3、M4 于 2026-10-04，M5 和 Part C 文档于 2026-10-05，M9（GUI）和 Part D 文档于 2026-10-12（M9 提前到 M6 之前做，原因见"偏离 Part B 的记录"），M6 代码于 2026-10-20。如果接手时批次还没跑完或被中断：`scripts/run_matrix.py` 会跳过已完成的 run、拒绝未完成的（把未完成的目录移到 `runs/_interrupted/` 再跑同一条命令）；命令写在 `configs/dqn_B_8x8.yaml` 的注释里（10×10 同样，换 `dqn_B_10x10.yaml` 和 `_W10` 的实验名）。Part D 成品 `..\43008-Project-Part-D-TheDeadlyTriad.docx`（4 页，套用课程模板；同目录有 LibreOffice 渲染的 PDF 预览），正文源文件 `docs/PartD-environment-gui.md`，详见下方"Part D"一节。Part C 成品 `..\43008-Project-Part-C-TheDeadlyTriad.docx`（源 `docs/PartC-initial-results.md`）；Part C 是否已提交，本仓库没有记录。**提交前用户要做**：（1）仓库在 2026-10-12 仍是 PRIVATE（`gh repo view` 核实），两份文档里的仓库链接批改人打不开——公开仓库或把课程协调人加为协作者；（2）用 Word 打开确认页数（我只用 LibreOffice 渲染过）；（3）push。之后是 M6（CNN on 观测 B；±replay ±target 消融），开工前先读 `docs/RESOURCE_BASELINE.md` 和"待拍板"表里标（M6）的各行。
 
 ## 里程碑清单
 
@@ -16,7 +16,7 @@
 | M3 | `vec_env.py` + 等价测试 + 吞吐基准（steps/s） | ✅ 2026-10-04 | `pytest`：224 passed，9.1 s（`tests/test_vec_env.py` 97 项）。等价门禁：19 组配置逐步逐位比较，58,580 次转移（wall 1597 / self 86 / starve 1362 / win 87，吃食 5275，自动重置 3132）。吞吐（env-only，10×10，随机动作，`runs/bench/vec_env_1.json`，git `b60a2e6`）：观测 A 在 N=128 为 622 k steps/s（标量 14 k 的 44.6×），N=256 为 1.07 M。详见下方"M3 验收"。复跑：`python scripts/bench_vec_env.py`（约 80 s） |
 | M4 | 表格 Q-learning（观测 A） | ✅ 2026-10-04 | `pytest`：890 passed，41 s。验收达成：8×8 上 5 种子 15.67 ± 0.87，random 0.23（约 68×），单个 run 约 6 s。10×10：18.51 ± 1.10（random 0.18，BFS 30.61）。ε/α/γ 起点：α=0.1、γ=0.9、ε 1.0→0.05（前 20% 步数）。表：`runs/tables/m4_W8.md`、`m4_W10.md`；run：`runs/tabular_q_W8/`、`runs/tabular_q_W10/`（git `c801fff`）。详见下方"M4 验收" |
 | M5 | DQN 核心（MLP on A）+ 评估协议 + 日志/checkpoint | ✅ 2026-10-05 | `pytest`：1237 passed，约 55 s。验收达成：DQN-A 在 8×8 上 16.11 ± 0.88（表格 Q 15.67 ± 0.87，分不出高下），在 10×10 上 20.29 ± 1.55（表格 Q 18.51 ± 1.10，DQN 更高）；首条评估曲线 `runs/figures/m5_W10_curve.png`、`m5_W8_curve.png`。表：`runs/tables/m5_W10_all.md`、`m5_W8_all.md`；run：`runs/dqn_A_W10/`、`runs/dqn_A_W8/`（git `0b4666c`）。**解读上的重要限定见下方“M5 验收”**。→ Part C 可交 |
-| M6 | CNN on B（8 平面 / 3 平面）；±replay ±target 消融 | ☐ | |
+| M6 | CNN on B（8 平面 / 3 平面）；±replay ±target 消融 | 🔶 代码 2026-10-20（`d81a7f3`），批次运行中 | 代码：`networks.CNN`（按 resource 的 `CustomCNN` 改）、`agent.replay` 开关、`aborted.json`、`scripts/bench_update.py`、3 个 B 配置；全量 1399 项测试通过。设备基准、学习探针、A 上的 ±replay 结果见"M6 验收"；B 上的 5 种子批次见同节（跑完即填） |
 | M7 | Double DQN + 过估计测量；Dueling；PER | ☐ | PER 最先砍 |
 | M8 | 奖励轴 R0–R3 + 行为分析 | ☐ | |
 | M9 | pygame GUI 三模式 | ✅ 2026-10-12 | `pytest`：1293 passed（+56，`tests/test_gui.py`，无头 SDL dummy 驱动，4 s）。验收达成：人玩（方向键 / WASD；默认逐步、Space 实时；可挂"顾问"agent 显示其 Q 值）+ agent 玩（基线 / Q 表 / 任意 DQN checkpoint；实时三动作 Q 值条形图与所选动作、观测 A 的 11 位、分数 / 饥饿计数 / 回报 / 本会话死因统计）+ 回放（JSON 录像 = 环境配置 + 种子 + 动作序列 + 每步 Q 值，重新模拟）。真实窗口冒烟通过。截图：`python scripts/gui_screenshots.py` → `runs/figures/partD_gui_*.png`。→ Part D 已交付。详见下方"M9 实现层面的决定" |
@@ -324,6 +324,66 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 
 成品 `..\43008-Project-Part-D-TheDeadlyTriad.docx`（4 页，套用 `Project-Part-D.docx` 模板；同目录有 LibreOffice 渲染的 PDF），正文源 `docs/PartD-environment-gui.md`，排版脚本 `runs/review/partd/build_partd.py` + `render.py`（不进 git；按 Part C 的脚本改）。内容：环境说明（棋盘与动力学、动作、终止与截断、观测 A / B、奖励 R0–R3、标量与向量化两套实现及等价门禁、自带玩家与 Part C 分数）；GUI 类型（自建环境 + 自写 pygame 界面）+ 实现与测试；四张截图及说明（人玩 + 表格 Q 顾问、agent 玩、局终死因与统计、回放）。截图由应用自身在 dummy 驱动下渲染，`python scripts/gui_screenshots.py` 重生成得到逐字节相同的帧（种子固定；图注里引用的分数与 Q 值均读自这些帧）。docx 结构校验通过（docx skill 的 `validate.py`）。 2026-10-12 按用户指示删除了文档里的"Differences from the Part B plan"一段；偏离只记在本文件的"偏离 Part B 的记录"。
 
+## M6 验收（2026-10-20 起；B 上的批次结果跑完即填）
+
+**设备基准**（`python scripts/bench_update.py --config ... --device ...`，2026-10-20，显卡与机器空闲；每次梯度更新 / 每次 `act_epsilon` 的毫秒，batch 256，128 个环境，200 次计时、20 次预热）：
+
+| 配置 | cuda，2 线程 | cpu，2 线程 | cpu，8 线程 |
+|---|---|---|---|
+| B8 CNN 8×8（32/64/64 → 512 → 3；2,156,963 参数） | **2.64 / 0.41** | 39.9 / 4.5 | 18.8 / 2.2 |
+| B8 CNN 10×10（3,336,611 参数） | **2.68 / 0.43** | 68.9 / 7.5 | 31.4 / 3.2 |
+| A MLP 8×8（11 → 256 → 256 → 3） | 1.59 / 0.21 | 1.71 / 0.16 | – |
+| B8 CNN 8×8，无 replay（batch 128） | 2.73 / 0.42 | – | – |
+| B8，无卷积（flatten → 512 → 512 → 3） | 1.94 / 0.28 | – | – |
+
+决定：B 配置 `device: cuda`（快 15–26 倍）；A 配置仍 `cpu`（空闲 GPU 下 1.59 对 1.71 ms 没有实质差别，CPU 同机逐位可重复）。M5 时 GPU 被占用的那组数字（MLP 在 GPU 上 5.4–6.4 ms）就此作废。**并行**：5 个 CNN 进程同时在 GPU 上时每个进程约 10 ms/更新（`metrics.csv` 的 `time_update_s`），`nvidia-smi` 利用率 83%，总吞吐只有单进程的约 1.3 倍——CNN 的 5 种子批次是 GPU 饱和的，8×8 一批（每 run 125,504 次更新）约 20 分钟，10×10（253,504 次）估计 45–60 分钟。`[COMPUTED，一次观测]` 多个批次并行不省时间，只省人工。每个训练进程约 1.5–1.8 GB 内存；10 个并行进程把这台 31 GB 的机器压到 0.4 GB 空闲，**不要同时跑超过 5 个**。
+
+**学习探针**（`dqn_B_8x8.yaml` 种子 0，预算缩到 128k 步，写在会话临时目录，不是正式结果）：25.6k 步 3.9 分，38.4k 9.5，64k 14.1，102k–128k 之间 14.8–15.8（DQN-A 的平台 16.1），86 s。CNN 收敛，Part B 的后备方案（"CNN 不收敛就以 A 为主线做全部实验"）不需要启用。冒烟配置的探索：8/8 通道、32 单元的 CNN 在 96k 步内不脱离随机水平（两个种子 5.25 / 1.55），16/32 通道、128 单元在 48k 步到 9.65 / 13.70，CPU 单线程 44 s——`configs/smoke_B_8x8.yaml` 按后者定稿。
+
+**观测 A 上的 ±replay ±target（8×8，5 种子，`runs/tables/m6_W8_A_ablation.md`，git `d81a7f3+dirty`，见下面的说明）**：
+
+| 批次 | 与主配置的差别 | 最后一次评估 | 最后 5 次平均 | wall / self | 每 run |
+|---|---|---|---|---|---|
+| `dqn_A_W8` | 主配置（M5） | 16.11 ± 0.88 | 16.07 ± 0.64 | 0.21 / 0.79 | 125,504 次更新，约 296 s |
+| `dqn_A_W8_notarget` | 每次更新后同步目标网络（M5） | 16.61 ± 1.04 | 16.59 ± 0.60 | 0.26 / 0.74 | |
+| `dqn_A_W8_noreplay` | 无回放：每 vec-step 1 次更新、用自己的 128 条转移 | 15.39 ± 0.80 | 15.68 ± 0.71 | 0.01 / 0.99 | 3,922 次更新，约 16 s |
+| `dqn_A_W8_noreplay_notarget` | 两者都去掉 | 15.43 ± 0.81 | 15.43 ± 0.47 | 0.01 / 0.99 | 3,922 次更新，约 16 s |
+
+能说的：在观测 A 上去掉回放低约 0.4–0.7 分（配对差未算；CI 有重叠），与 M5 里 G=4 / G=1（每条转移 8 / 2 次梯度步）的 15.39 / 15.02 同一量级，所以 A 上"无回放"的代价看起来主要是每条转移的梯度步数从 64 降到 1，而不是样本的时间相关性 `[INFERRED, MED；两个因素在这个设计里没有分开]`；目标网络仍然没有可测作用（15.43 对 15.39）。无回放的 agent 几乎只死于撞自己（self 0.99），有回放的有 21–26% 撞墙——原因未查。这是预期中的"A 上消融接近零结果"（待拍板表的（M6）行），B 上的结果才是主结论。
+
+**观测 B（CNN，8×8）主结果**（`runs/dqn_B8_W8/{0..4}`，512,000 步、125,504 次更新、41 次评估；表 `runs/tables/m6_W8_obs.md`，图 `runs/figures/m6_W8_obs_curve.png`）：
+
+| player | 最后一次评估 | 最后 5 次平均 | mean steps | wall / self / starve |
+|---|---|---|---|---|
+| DQN-A（MLP，M5） | 16.11 ± 0.88 | 16.07 ± 0.64 | 104.9 | 0.21 / 0.79 / 0.00 |
+| **DQN-B8（CNN）** | **17.81 ± 0.90** | **17.63 ± 0.28** | 131.4 | 0.05 / 0.95 / 0.00 |
+| BFS | 23.07 ± 1.13 | – | 151.4 | 0.35 / 0.65 / 0.00 |
+
+能说的：**B8 高于 A**，5 个种子配对（同样的初始权重种子、训练棋盘、评估棋盘）逐个都高：最后一次评估 +1.71（配对 95% CI +1.26 到 +2.15；逐种子 +1.44 / +1.27 / +1.69 / +2.08 / +2.05），最后 5 次平均 +1.56（+1.08 到 +2.04）。这是第一个"状态表示"的差别：两者的训练算法、预算、γ、评估协议完全相同，只有观测和网络不同。B8 仍远低于 BFS（23.1）。**学得慢得多**：A 在 25.6k 步的评估就到平台（M5），B8 各种子第一次过 15 分在 128k–154k 步；B8 在 512k 步时还在缓慢上升（跨种子均值 358k 步 17.3 → 512k 步 17.8；每个种子的最高分出现在 422k–512k），预算到头时未必已到平台 `[INFERRED, MED]`。死因不同：B8 几乎只撞自己（0.95），A 有 21% 撞墙。B8 的 `mean_q` 在 300k 步后稳定在 1.5 左右（A 是 1.51–1.57，M5），没有发散迹象。
+
+**B 上的消融批次**：`dqn_B7_W8` → `dqn_B8_W8_noreplay` → `dqn_B8_W8_notarget` → `dqn_B3_W8` → `dqn_B8_W8_noreplay_notarget`（各 5 种子，后台队列）。跑完后用会话临时目录的 `m6_tables.sh 8` 重出 `runs/tables/m6_W8_{obs,components}.md` 和两张图，结果填在这里。10×10 的同一组批次在 8×8 之后。
+
+**git hash 的说明**：`dqn_A_W8_noreplay`、`dqn_A_W8_noreplay_notarget` 和 `dqn_B8_W8` 这 15 个 run 的 `config.yaml` 记的是 `d81a7f3+dirty`。原因：提交 `d81a7f3` 之后我把 `tests/test_dqn.py` 的行尾从 CRLF 改成 LF（测试 agent 写出的文件带 CRLF；`.gitattributes` 规定 LF），批次启动的那一刻 `git status` 把它报成已修改，几秒后再查 `git diff` 为空。这些 run 的代码与 `d81a7f3` 逐字节相同；没有停掉重跑，因为中止训练进程的操作被拒绝，而且差别只是一个测试文件的行尾。之后的批次记的是干净的 hash。
+
+**测试有效性**：`tests/` 的 M6 部分与实现由不同 agent 按同一规格（`M6_SPEC.md`，会话临时目录）独立编写；集成时 8 项不过，全是实现与规格的差异（冒烟配置改值后的期望值、B 配置注释缺一句、`aggregate` 的"先警告再报错"约定、CLI 路径没传中止计数），没有测试本身的错误。独立写的无回放参照循环逐位复现 `train`；spy 确认无回放时每个 vec-step 的转移恰好送进一次 `update`、`sample_rng` 从未被抽取；CNN 的前向与用 `F.conv2d` 手写的参照在 1e-5 内一致；M5 之前的 checkpoint 用新字段的默认值加载。全量 1399 项（M5 后 1293 项）。
+
+## M6 实现层面的决定
+
+| 项 | 决定 | 影响 |
+|---|---|---|
+| CNN 结构 | 按 resource W9 Part D 的 `CustomCNN` 改：`Sequential` 卷积栈 → `Flatten` → dummy forward 求 `n_flatten` → 全连接。卷积改为 3×3、stride 1、padding 1（Atari 的 8×8/4 核在 10×10 上剩不下东西），通道 32/64/64，无池化；dummy 输入用 `zeros`（没有 `observation_space`）；基类 `nn.Module` | 8×8 上 216 万参数，10×10 上 334 万（`Linear(6400, 512)` 占 98%）。出处与改动记在 `networks.CNN` 的 docstring |
+| `hidden` 的含义 | A：整个网络的隐藏层宽度；B：卷积后的全连接层。B 配置写 `hidden: [512]`，等于 resource 的 `features_dim = 512` 加 SB3 的 Q 头 | 一个字段两种观测共用，不另加 `features_dim` |
+| `conv_channels` | 只对观测 B 生效，A 上忽略（docstring 写明）；`[]` = 无卷积，网格 flatten 进 MLP（"无卷积先验"的消融，未跑） | A 配置文件不写这个键 |
+| "无回放"的定义 | 按待拍板：`agent.replay: false` → 每个 vec-step 在 `learning_starts` 之后用自己的 `n_envs` 条转移做 **1** 次梯度更新，每条只用一次；`grad_steps_per_vec_step` 必须是 null 或 1；`batch_size`、`buffer_size` 不用；`buffer_size` 列为 0；`sample_rng` 仍然创建但不抽取（种子布局不变） | 与有回放相比同时改了两件事：batch 的时间混合，和每条转移的梯度步数（64 → 1）。报告里要把这一点说清 |
+| 目标网络消融 | 不加新开关：`target_update_every: 1` 即每次更新后同步（M5 已有） | |
+| `aborted.json` | 非有限损失时写 `error / env_steps / vec_steps / grad_steps`，再抛出；进入 `RUN_FILES`。`aggregate` 把中止 run 与未完成 run 分开警告，行里多 `n_aborted / aborted`，表的 seeds 列写 `3 (+2 aborted)`，没有中止时表逐字节不变 | 幸存者偏差可见。本里程碑没有 run 中止 |
+| 发散判定 | 仍按待拍板在 `metrics.csv` 上看 `mean_q`、贪心得分、饿死比例；没有写成代码 | |
+| `buffer_size ≥ n_envs` | 有回放时校验（M5 遗留） | |
+| `--set` 的数字提示 | 正则扩到 `1.0e9` 这种有点无符号指数的写法 | |
+| 被中断 run 的提示 | `FileExistsError` 的信息加上"把目录移出实验目录（如 `runs/_interrupted/`）再重跑" | M5 遗留 |
+| 冒烟配置 | 16/32 通道、128 单元、48k 步、CPU 单线程约 45 s，终局 9.65（种子 0）；测试门槛 > 5 | 8/8 通道 32 单元的版本学不到东西 |
+| 批次由我在后台跑 | 用户没有在线；按 M5 的先例在后台跑并在本文件记录命令。CNN 批次 GPU 饱和，串行排队 | 超过 `CLAUDE.md` 的 10 分钟线，已在对话里说明 |
+
 ## 待拍板（默认值已按此实现或将按此实现；未收到反对即视为定案）
 
 | 项 | 默认 | 理由 |
@@ -348,11 +408,11 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | （M5）训练日志里的截断计数 | DQN 的 `metrics.csv` 加一列"本窗口内被饥饿截断的训练局数" | 截断规则有没有被触发现在只能靠重跑来数；表格 Q 的两行里几乎没触发 |
 | （M8）奖励轴用哪个 γ | R3 hacking 的对比在 **γ=0.99** 下做，并在报告里写明 | PLAN §3.5 里"无限循环价值 ≈ 0.5"和"对称 R3 与势函数形式只差 ~1e-4/步"都是按 γ=0.99 算的。γ=0.9 时非对称 R3 绕圈只值约 0.05（一个食物 +1），R1 绕圈 −0.10（死亡 −1.01），而且 bootstrap 与"在饥饿上限处截成终止"给出的绕圈价值相同到 4 位小数——在 γ=0.9 下既看不到 R3 hacking，也看不到 R1 的"自杀求解脱" |
 | R2 的 `env.reward.gamma` | 现状：必须显式设成 agent 的 γ（棋盘配置里 agent 是 0.9，`RewardConfig` 默认 0.99；忘了设会在加载时报错）。M8 再决定是否让 `null` 表示"跟随 agent" | 改语义要先改 PLAN §3.5 |
-| （M6）消融要在哪个观测上做 | ±replay、±target 在观测 A **和** B 上都做；主结论以 B 为准 | M5 实测：在 A 上去掉目标网络没有差别，γ=0 的表格就到平台，梯度裁剪和 Huber 线性区都不起作用。在 A 上做消融大概率得到零结果，本身是一个可报告的发现，但看不出这些组件的作用。**Part B 的后备方案（“CNN 不收敛就以 A 为主线做全部奖励和消融实验”）因此很弱**：A 上的消融预期是零结果 |
-| （M6）“无 replay”怎么定义 | 显式开关（如 `agent.replay: false`）：每个 vec-step 用这一步自己的 `n_envs` 条转移做 1 次梯度更新，每条只用一次；报告里写明每条转移的梯度步数从 64 变成 1 | 用 `buffer_size = batch_size = n_envs` 来模拟是不对的：采样是有放回的，一个 batch 平均只含 81 条不同的转移（63%），而且每步还要抽 32 个这样的 batch。同时加一条校验 `buffer_size ≥ n_envs` |
-| （M6）“发散”怎么判定 | 在 `metrics.csv` 上定义：`mean_q` 相对可达回报的倍数、贪心得分、饿死比例；另加一个中止标记文件（`aborted.json`）让 `aggregate` 把中止的种子单独列出 | NaN 中止在 lr 2.5e-4 下不可能触发，所以不能用它来判定消融里的发散；中止的种子现在会从表里静默消失（幸存者偏差） |
-| （M6）CNN 的设备 | 重新测 CPU 对 GPU，再定 `device` | MLP 上 CPU 更快，这个结论不能直接搬到 CNN。测的时候确保显卡空闲 |
-| （M6）10×10 上 DQN 曲线中段的下跌 | 用 ±replay 消融和不同的 buffer 大小检验 | `[INFERRED]` 下跌发生在 buffer 里只剩 ε=0.05 的数据之后；没有验证 |
+| （M6）消融要在哪个观测上做 | **已按此做（2026-10-20）**：±replay、±target 在观测 A **和** B 上都做；主结论以 B 为准。A 上的结果见"M6 验收"（去掉回放低约 0.5 分，目标网络无作用） | M5 实测：在 A 上去掉目标网络没有差别，γ=0 的表格就到平台，梯度裁剪和 Huber 线性区都不起作用。在 A 上做消融大概率得到零结果，本身是一个可报告的发现，但看不出这些组件的作用。**Part B 的后备方案（“CNN 不收敛就以 A 为主线做全部奖励和消融实验”）因此很弱**：A 上的消融预期是零结果 |
+| （M6）“无 replay”怎么定义 | **已实现（`agent.replay: false`，2026-10-20）**：每个 vec-step 用这一步自己的 `n_envs` 条转移做 1 次梯度更新，每条只用一次；`grad_steps_per_vec_step` 必须是 null 或 1；报告里写明每条转移的梯度步数从 64 变成 1 | 用 `buffer_size = batch_size = n_envs` 来模拟是不对的：采样是有放回的，一个 batch 平均只含 81 条不同的转移（63%），而且每步还要抽 32 个这样的 batch。校验 `buffer_size ≥ n_envs` 已加 |
+| （M6）“发散”怎么判定 | **`aborted.json` 已实现（2026-10-20）**，`aggregate` 把中止的种子分开警告并在表的 seeds 列标出；指标判定仍在 `metrics.csv` 上做：`mean_q` 相对可达回报的倍数、贪心得分、饿死比例 | NaN 中止在 lr 2.5e-4 下不可能触发，所以不能用它来判定消融里的发散；中止的种子以前会从表里静默消失（幸存者偏差） |
+| （M6）CNN 的设备 | **已定（2026-10-20）：B 配置 `cuda`**，A 仍 `cpu`。基准见"M6 验收"：CNN 一次更新 GPU 2.6–2.7 ms，CPU 40–69 ms | MLP 上 CPU 更快的结论只对 MLP 成立。空闲 GPU 上 MLP 也不比 CPU 慢（1.59 对 1.71 ms） |
+| （M6）10×10 上 DQN 曲线中段的下跌 | 用 ±replay 消融和不同的 buffer 大小检验（10×10 的无回放批次排在 8×8 之后，跑完再看） | `[INFERRED]` 下跌发生在 buffer 里只剩 ε=0.05 的数据之后；没有验证 |
 | （M10）矩阵的更新预算 | 默认仍是 G=32；时间不够时用 G=4（每 run 便宜约 8 倍，8×8 上低约 0.5 分），并在报告里写明 | 见“M5 验收”第 4 点 |
 | （M10 之前）`aggregate` | 加 `--last-steps`（按步数而不是按评估次数取尾部，让不同评估间隔的实验可比）；`_last_k_summary` 校验各种子的尾部是同样的步数 | 现在“最后 5 次评估”对 DQN 是 51k 步、对表格 Q 是 100k / 200k 步；等跨度重算 DQN 的数字不变（16.06 ± 0.60、20.44 ± 1.49） |
 | Part C / 报告的结果表口径 | 主列写“最后 5 次评估的平均”，括号里给“最后一次评估”；加一条脚注：所有 ± 都以同一批 100 个评估棋盘为条件，绝对分数另有约 ±1 的棋盘抽样不确定性（各行同向，不影响比较） | 最后一次评估的跨种子区间里，评估噪声和快照抖动占了一大半（单个 100 局均值的标准误 0.54，种子间标准差 0.71） |
@@ -379,6 +439,8 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | 2026-10-05 | Part B 时间表 Week 8 的 “DQN with CNN (representation B) running; initial comparison table; repository link (Part C)” 只兑现了后两项 | CNN 尚未实现（M6）。Part C 文档里明说了，并用 γ=0 对照的结果说明为什么下一步必须转到观测 B。仓库链接已写进文档，但仓库在 2026-10-05 仍是 PRIVATE，需用户处理 |
 | 2026-10-12 | M9（GUI）先于 M6（CNN）完成，PLAN §4 的顺序 M6 → M9 调换 | Part D 截止在前，模板要求"实际 GUI 的截图"；GUI 只依赖标量环境和已有的玩家，不依赖 CNN。偏离只记在此（Part D 文档的偏离说明段按用户指示删除） |
 | 2026-10-12 | GUI 的 checkpoint / 观测模式在命令行选择，不是侧栏单选钮；访问热力图叠加未实现；观测 A 特征条与人玩顾问是 mock-up 没有的新增 | 侧栏控件成本高、答辩价值低；热力图的数据来自 M8 的行为分析，届时一并做。三条只记在此（文档的偏离说明段按用户指示删除） |
+| 2026-10-20 | DQN-B（CNN）的 γ 也用 0.9（Part B 的初始值 0.99） | 与 DQN-A、表格 Q 在同一折扣下比较，A 对 B 的差别才只剩观测与网络。M5 在 A 上验证过 γ=0.99 不改变结果；B 上没有验证。M8 的奖励轴按待拍板在 γ=0.99 下做，届时 B8 要在 0.99 下补一条主线 |
+| 2026-10-20 | Part B 的 "−replay" 没有定义；实现为"每个 vec-step 对自己的 128 条转移做 1 次梯度更新"，每条转移的梯度步数从 64 变成 1 | 这是唯一不改变其他超参又没有回放语义的做法（待拍板表的（M6）行）。后果：这个消融同时改变了 batch 的时间混合与每条转移的更新次数两件事，报告里不能把差别全归给"相关样本" |
 
 ## 会话日志
 
@@ -395,4 +457,5 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 - 2026-10-05：过程记录。（1）10×10 的 5 种子训练按 `CLAUDE.md` 应由用户在独立终端跑，命令给了用户；用户先说“暂停”、后说“继续”，期间没有跑，我就在后台分两批跑了，第一批用了 10.7 分钟（超过 10 分钟线），已在对话里报告。（2）用户说“stop 暂停”时我停掉了正在跑的审查工作流和 γ=0.99 批次，留下 `runs/dqn_A_W8_g099/` 5 个未完成的 run 目录（没有删，按规则也不能删）；继续后用新名字 `dqn_A_W8_gamma099` 重跑。（3）跑训练时显卡被 `cs2.exe` 占用，所有 GPU 计时都不是空闲条件下的。
 - 2026-10-05：Part C 文档完成（`..\43008-Project-Part-C-TheDeadlyTriad.docx`，3 页）。先写正文（`docs/PartC-initial-results.md`），再用 6 个 agent 做三路检查加复核，改稿后再做终稿事实复查和校对；确认的问题共约 45 条，其中 1 条是事实错误（γ=0 对照在 10×10 上有 5 局不是“无路可走才死”），其余是说过头、与 Part B 对不上、指代不清和篇幅。用课程模板排版（解包模板、替换三处红色占位段、填表头、插图、加超链接），docx 结构校验通过。过程中发现仓库是 PRIVATE，已告知用户。尝试用 Word 的 COM 自动化数页数时调用卡住，已停掉并清理掉我启动的那个 Word 进程，没有影响其他程序；页数以 LibreOffice 渲染和校对 agent 的 Word 导出为准。
 - 2026-10-08（Cowork）：用户上传 resources week06–10，并下达指令：任务代码以 resources 为基础，能原样用就原样用、尽量少改。新增 `docs/RESOURCE_BASELINE.md`，`CLAUDE.md` 加规则和先读项，待拍板加一行（适用范围）。**这些文档改动没有提交 git**；下次会话开始时先 commit：`docs: resource-first rule and RESOURCE_BASELINE (2026-10-08)`。
+- 2026-10-20：M6 代码完成（commit `d81a7f3`，全量 1399 项测试通过；M5 后是 1293 项）。做法同前：写规格（`M6_SPEC.md`，会话临时目录）→ 一个 agent 按规格独立写测试，我同时写实现 → 集成（8 项不过，全是实现与规格的差异，见"M6 验收"的测试有效性段）。新增 `networks.CNN`、`DQNConfig.replay / conv_channels`、`train` 的无回放分支与 `aborted.json`、`aggregate` 的中止 run 处理、`scripts/bench_update.py`、`configs/{smoke_B_8x8,dqn_B_8x8,dqn_B_10x10}.yaml`、`tests/test_bench_update.py`；A 配置写出 `replay: true`；README / PLAN §2 / `RESOURCE_BASELINE.md` 同步。设备基准（GPU 空闲）与 128k 步的学习探针之后，先跑了 A 上的两个无回放批次（CPU，各 5 种子，共约 1 分钟）和 B8 的 8×8 主批次（GPU），这 15 个 run 记成 `d81a7f3+dirty`（原因见"M6 验收"）；其余 8×8 的 B 批次排成一条后台队列。用户不在线，批次是我在后台跑的（M5 先例），超过 `CLAUDE.md` 的 10 分钟线。无头 GUI 用 B 观测的 checkpoint 跑过一次（侧栏显示 "Observation B: 8 planes"，动作值正常）。
 - 2026-10-12：先提交了 2026-10-08 的文档改动（`7997035`）。核验进度后确认 Part D 模板要求实际 GUI 截图而 `gui/app.py` 仍是桩，于是把 M9 提前到 M6 之前做。做法：写规格（`M9_SPEC.md`，会话临时目录）→ 一个 agent 按规格独立写 `tests/test_gui.py`（56 项），我同时写 `app.py` → 集成：56 项里 1 项不过（规格里"人玩首个方向键是否取消暂停"两句互相矛盾），按测试的读法改实现 → 全量 1293 过。真实窗口冒烟一次（弹窗约 2 s，`--steps 40` 自动退出）。再写 `scripts/gui_screenshots.py` 出四张图，写 `docs/PartD-environment-gui.md`，按 Part C 的脚本改出 `runs/review/partd/build_partd.py`，模板排版 → 校验通过 → LibreOffice 渲染 4 页逐页看过（第一版"Screen shot(s)"标签孤立在页底，给它加了 keepNext）。`gh repo view`：仓库仍 PRIVATE。 之后按用户指示删除文档里的偏离说明段，重排后仍 4 页、校验通过，成品已覆盖。
