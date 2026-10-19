@@ -1,5 +1,6 @@
 """Config-driven training entry point (PLAN.md milestones M4: tabular
-Q-learning, M5: DQN). ``agent.kind`` of the configuration selects the trainer.
+Q-learning, M5: DQN, M6: DQN without replay). ``agent.kind`` of the
+configuration selects the trainer.
 
 Command line::
 
@@ -40,10 +41,18 @@ directory is named by the bare seed number, e.g. ``runs/tabular_q_W10/0/``::
                      ``total_env_steps``: the per-episode records behind the
                      results table. Written last and in one piece; its
                      presence is what marks a run as finished.
+    aborted.json     dqn, only when an update produced a non-finite loss:
+                     ``error`` (the message), ``env_steps`` and ``vec_steps``
+                     of the vec-step whose update failed, ``grad_steps``
+                     completed. Distinguishes an aborted run from one that was
+                     merely interrupted; ``snake_rl.analysis.aggregate``
+                     reports the two separately.
 
 A run is never overwritten: ``train`` raises ``FileExistsError`` if the
 directory already holds any of these files (of either agent kind), finished
-or not.
+or not. To repeat an interrupted run under the same experiment name, move
+its directory out of the experiment directory first (for example to
+``runs/_interrupted/``) and run again.
 
 Tabular training loop
 ---------------------
@@ -104,11 +113,32 @@ transitions and is followed by ``G`` gradient steps on uniform batches
 before ``learning_starts`` environment steps are in the buffer. Each
 evaluation also writes its checkpoint. ``DQNAgent.update`` raises
 ``FloatingPointError`` on a non-finite loss (Part B: automatic abort on NaN):
-the metrics file is closed with the rows written so far, neither ``model.pt``
-nor ``final_eval.json`` is written (the run stays recognisable as
-unfinished) and the error leaves ``train``; the command line reports it with
-exit code 3. torch is imported by the DQN trainer only: a tabular run and
-``--help`` do not pay for it.
+the metrics file is closed with the rows written so far, ``aborted.json`` is
+written, neither ``model.pt`` nor ``final_eval.json`` is written (the run
+stays recognisable as unfinished) and the error leaves ``train``; the command
+line reports it with exit code 3. torch is imported by the DQN trainer only:
+a tabular run and ``--help`` do not pay for it.
+
+DQN without replay (``agent.replay: false``, the M6 ablation)
+-------------------------------------------------------------
+The same loop with no buffer: every vec-step after ``learning_starts`` is
+followed by exactly ONE gradient step on that vec-step's own ``n_envs``
+transitions, each used once (``batch_size``, ``buffer_size`` and
+``grad_steps_per_vec_step`` are unused)::
+
+    for k = 0, 1, ...:
+        epsilon = ...; actions = agent.act_epsilon(obs, epsilon, explore_rng)
+        next_obs, reward, terminated, truncated, info = env.step(actions)
+        if (k + 1) * n_envs >= learning_starts:
+            agent.update(Batch(obs, actions, reward, info["final_obs"], terminated))
+        obs = next_obs
+
+The transition semantics are the same (true successor, ``terminated`` only).
+``default_rng([seed, 2])`` is still created, so the seed layout is the same,
+but never drawn from. ``buffer_size`` is 0 in every metrics row. Against the
+replay loop this changes two things at once, both of which the buffer
+provides: the mixing of a batch across time and policies, and the number of
+gradient steps per transition (64 in the shipped configurations, 1 here).
 
 Seeds
 -----
@@ -156,7 +186,7 @@ episodes since the previous row that ended by starvation truncation.
 ``DQNAgent.update`` statistics since the previous row (Huber loss, mean
 ``Q(s, a)`` of the batch, mean target, global gradient norm before clipping);
 empty while no update has happened. ``buffer_size``: transitions in the
-replay buffer. ``time_env_s``, ``time_act_s``, ``time_update_s``,
+replay buffer (0 without replay). ``time_env_s``, ``time_act_s``, ``time_update_s``,
 ``time_eval_s``: cumulative seconds since the start spent in ``env.step``, in
 ``act_epsilon``, in sampling + gradient steps, and in evaluations; what is
 left of ``wall_time_s`` is the buffer writes, checkpoints and bookkeeping.
@@ -188,7 +218,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 import numpy as np
 import yaml
 
-from snake_rl.agents.dqn import ReplayBuffer  # numpy only; the torch part is imported by the DQN trainer
+from snake_rl.agents.dqn import Batch, ReplayBuffer  # numpy only; the torch part is imported by the DQN trainer
 from snake_rl.agents.schedules import linear_schedule
 from snake_rl.agents.tabular_q import TabularQAgent
 from snake_rl.config import ExperimentConfig, config_from_dict, config_to_dict, env_seed_for, load_config
@@ -205,9 +235,11 @@ Q_TABLE_FILE = "q_table.npz"
 MODEL_FILE = "model.pt"
 CHECKPOINT_DIR = "checkpoints"
 FINAL_EVAL_FILE = "final_eval.json"
+ABORTED_FILE = "aborted.json"
 #: Everything a run writes, of either agent kind (``q_table.npz``: tabular_q;
-#: ``model.pt`` and ``checkpoints/``: dqn). A directory holding any of them is a run.
-RUN_FILES = (CONFIG_FILE, METRICS_FILE, Q_TABLE_FILE, MODEL_FILE, CHECKPOINT_DIR, FINAL_EVAL_FILE)
+#: ``model.pt``, ``checkpoints/`` and ``aborted.json``: dqn). A directory
+#: holding any of them is a run.
+RUN_FILES = (CONFIG_FILE, METRICS_FILE, Q_TABLE_FILE, MODEL_FILE, CHECKPOINT_DIR, FINAL_EVAL_FILE, ABORTED_FILE)
 
 #: Evaluation columns shared by every agent kind.
 EVAL_COLUMNS = (
@@ -348,7 +380,8 @@ def _evaluate_tabular(
 
 
 def _train_dqn(cfg: ExperimentConfig, seed: int, run_dir: Path, quiet: bool) -> None:
-    """DQN with uniform replay and a target network (the DQN loop of the module docstring)."""
+    """DQN with a target network, with uniform replay (``agent.replay``) or
+    without it (the two DQN loops of the module docstring)."""
     import torch  # here, not at module level: tabular runs and --help never import torch
 
     from snake_rl.agents.dqn.agent import DQNAgent
@@ -358,42 +391,60 @@ def _train_dqn(cfg: ExperimentConfig, seed: int, run_dir: Path, quiet: bool) -> 
         torch.set_num_threads(ac.torch_threads)
     env = VecSnakeEnv(cfg.env, tc.n_envs, seed=env_seed_for(seed, tc.n_envs))
     agent = DQNAgent(env.obs_shape, env.n_actions, ac, seed=seed)  # initial weights: a function of the run seed
-    buffer = ReplayBuffer(ac.buffer_size, env.obs_shape)
+    buffer = ReplayBuffer(ac.buffer_size, env.obs_shape) if ac.replay else None
     explore_rng = np.random.default_rng([seed, 1])  # exploration stream, as in the tabular loop
-    sample_rng = np.random.default_rng([seed, 2])  # replay sampling stream
-    grad_steps_per_vec_step = ac.grad_steps_per_vec_step or max(1, tc.n_envs // 4)
+    sample_rng = np.random.default_rng([seed, 2])  # replay sampling stream (created, never drawn without replay)
+    grad_steps_per_vec_step = (ac.grad_steps_per_vec_step or max(1, tc.n_envs // 4)) if ac.replay else 1
     decay_steps = ac.eps_decay_fraction * tc.total_env_steps
     # Queued GPU work is waited for at row boundaries only, never per update.
     timer = PhaseTimer(synchronize=torch.cuda.synchronize if agent.device.type == "cuda" else None)
 
-    with MetricsWriter(run_dir / METRICS_FILE, DQN_COLUMNS) as metrics:
-        evaluate_now = partial(
-            _evaluate_dqn, agent, buffer, cfg, metrics, run_dir, timer, label=f"{cfg.exp}/{seed}", quiet=quiet
-        )
-        obs = env.reset()
-        last_eval = evaluate_now(0, ac.eps_start, DQNWindow())  # before any update
-        window = DQNWindow()
-        for k in range(tc.total_env_steps // tc.n_envs):
-            epsilon = linear_schedule(k * tc.n_envs, ac.eps_start, ac.eps_end, decay_steps)
-            with timer.phase("act"):
-                actions = agent.act_epsilon(obs, epsilon, explore_rng)
-            with timer.phase("env"):
-                next_obs, reward, terminated, truncated, info = env.step(actions)
-            # True successor (not the post-reset observation) and the terminated
-            # flag only: a starvation truncation is replayed as an ordinary
-            # transition, so its target bootstraps.
-            buffer.add(obs, actions, reward, info["final_obs"], terminated)
-            obs = next_obs
-            window.add_step(info, truncated)
+    env_steps = 0
+    try:
+        with MetricsWriter(run_dir / METRICS_FILE, DQN_COLUMNS) as metrics:
+            evaluate_now = partial(
+                _evaluate_dqn, agent, buffer, cfg, metrics, run_dir, timer, label=f"{cfg.exp}/{seed}", quiet=quiet
+            )
+            obs = env.reset()
+            last_eval = evaluate_now(0, ac.eps_start, DQNWindow())  # before any update
+            window = DQNWindow()
+            for k in range(tc.total_env_steps // tc.n_envs):
+                epsilon = linear_schedule(k * tc.n_envs, ac.eps_start, ac.eps_end, decay_steps)
+                with timer.phase("act"):
+                    actions = agent.act_epsilon(obs, epsilon, explore_rng)
+                with timer.phase("env"):
+                    next_obs, reward, terminated, truncated, info = env.step(actions)
+                # True successor (not the post-reset observation) and the terminated
+                # flag only: a starvation truncation is learned from as an ordinary
+                # transition, so its target bootstraps.
+                if buffer is not None:
+                    buffer.add(obs, actions, reward, info["final_obs"], terminated)
+                window.add_step(info, truncated)
 
-            env_steps = (k + 1) * tc.n_envs
-            if env_steps >= ac.learning_starts:
-                with timer.phase("update"):
-                    for _ in range(grad_steps_per_vec_step):
-                        window.add_update(agent.update(buffer.sample(ac.batch_size, sample_rng)))
-            if env_steps % tc.eval_every == 0:
-                last_eval = evaluate_now(env_steps, epsilon, window)
-                window = DQNWindow()
+                env_steps = (k + 1) * tc.n_envs
+                if env_steps >= ac.learning_starts:
+                    with timer.phase("update"):
+                        if buffer is not None:
+                            for _ in range(grad_steps_per_vec_step):
+                                window.add_update(agent.update(buffer.sample(ac.batch_size, sample_rng)))
+                        else:  # no replay: this vec-step's own transitions, once, one gradient step
+                            own = Batch(obs=obs, actions=actions, rewards=reward, next_obs=info["final_obs"],
+                                        terminated=terminated)
+                            window.add_update(agent.update(own))
+                obs = next_obs
+                if env_steps % tc.eval_every == 0:
+                    last_eval = evaluate_now(env_steps, epsilon, window)
+                    window = DQNWindow()
+    except FloatingPointError as err:
+        # Mark the run as aborted (not merely interrupted) for the analysis;
+        # the metrics file is already closed with the rows written so far.
+        _write_json(run_dir / ABORTED_FILE, {
+            "error": str(err),
+            "env_steps": env_steps,
+            "vec_steps": env_steps // tc.n_envs,
+            "grad_steps": agent.grad_steps,
+        })
+        raise
 
     agent.save(run_dir / MODEL_FILE)  # with the optimiser state
     _save_final_eval(last_eval, run_dir)
@@ -468,7 +519,7 @@ class PhaseTimer:
 
 def _evaluate_dqn(
     agent: "DQNAgent",
-    buffer: ReplayBuffer,
+    buffer: ReplayBuffer | None,
     cfg: ExperimentConfig,
     metrics: "MetricsWriter",
     run_dir: Path,
@@ -498,7 +549,7 @@ def _evaluate_dqn(
         "train_mean_score": window.mean_score,
         "train_truncated": window.truncated,
         **{name: window.mean(name) for name in UPDATE_STATS},
-        "buffer_size": len(buffer),
+        "buffer_size": len(buffer) if buffer is not None else 0,
         **{f"time_{phase}_s": round(timer.seconds[phase], 3) for phase in PHASES},
         "wall_time_s": round(timer.elapsed, 3),
     }
@@ -619,7 +670,8 @@ def _start_run(cfg: ExperimentConfig, seed: int, env_seed: int, run_dir: Path, a
     if existing:
         raise FileExistsError(
             f"{run_dir} already holds a run ({', '.join(existing)}); runs are never overwritten - "
-            f"use another --exp or --seed"
+            f"use another --exp or --seed, or, to repeat an interrupted run under the same name, move that "
+            f"directory out of its experiment directory first (for example to runs/_interrupted/)"
         )
     record = config_to_dict(cfg)
     record["run"] = {
@@ -639,6 +691,12 @@ def _start_run(cfg: ExperimentConfig, seed: int, env_seed: int, run_dir: Path, a
         f.write("# Written by snake_rl.train before training started. To repeat this run:\n")
         f.write("#   python -m snake_rl.train --config <this file> --seed <run.seed> --exp <new name>\n")
         yaml.safe_dump(record, f, sort_keys=False)
+
+
+def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(dict(payload), f, indent=2)
+        f.write("\n")
 
 
 def _save_final_eval(result: EvalResult, run_dir: Path) -> None:

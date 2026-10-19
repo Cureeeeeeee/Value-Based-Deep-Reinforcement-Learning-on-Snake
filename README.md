@@ -53,8 +53,9 @@ snake_rl/
     baselines.py random / BFS greedy (time-aware) / Hamiltonian cycle
     tabular_q.py tabular Q-learning on observation A (synchronous batch form)
     schedules.py linear epsilon schedule
-    dqn/         config.py (torch-free), networks.py (MLP; CNN in M6), replay.py (uniform),
-                 agent.py (DQN with target network; Double DQN switch)
+    dqn/         config.py (torch-free), networks.py (MLP on observation A, CNN on observation B),
+                 replay.py (uniform), agent.py (DQN with target network; Double DQN switch;
+                 the training loop's replay switch is agent.replay in the config)
   config.py      YAML experiment files: loading, --set overrides, validation, seed layout
   train.py       config-driven training, writes runs/<exp>/<seed>/ (tabular Q and DQN)
   evaluate.py    greedy evaluation protocol with death-cause breakdown, scalar and batched (+ CLI)
@@ -65,7 +66,8 @@ snake_rl/
                  live action-value panel / replay of recorded episodes; headless screenshots
 tests/           pytest; the scalar-vs-vectorised equivalence test is the regression gate
 configs/         one yaml per experiment
-scripts/         check_env.py, bench_vec_env.py (throughput), run_matrix.py (seeds x grid batch runner),
+scripts/         check_env.py, bench_vec_env.py (env throughput), bench_update.py (one gradient step,
+                 cpu vs cuda), run_matrix.py (seeds x grid batch runner),
                  gui_screenshots.py (the Part D figures, rendered by the GUI without a window)
 notebooks/       Colab notebook regenerating the main figures from logs/checkpoints
 runs/            training outputs (not in git)
@@ -112,7 +114,10 @@ about 0.2.
 ```powershell
 python -m snake_rl.train --config configs/tabular_q_10x10.yaml --seed 0          # one run, about 9 s
 python -m snake_rl.train --config configs/smoke_8x8.yaml --seed 0                # DQN smoke run, seconds, CPU
+python -m snake_rl.train --config configs/smoke_B_8x8.yaml --seed 0              # the same with the CNN on observation B
 python scripts/run_matrix.py --config configs/dqn_A_10x10.yaml --seeds 0 1 2 3 4 --jobs 5   # about 10 min on the CPU
+python scripts/run_matrix.py --config configs/dqn_B_10x10.yaml --seeds 0 1 2 3 4 --jobs 5   # CNN on observation B, GPU
+python scripts/bench_update.py --config configs/dqn_B_10x10.yaml --device cuda   # ms per gradient step (device choice)
 python scripts/run_matrix.py --config configs/tabular_q_10x10.yaml --seeds 0 1 2 3 4 --jobs 5
 python -m snake_rl.analysis.aggregate --baseline runs/baselines/random_W10_relative.json runs/baselines/bfs_W10_relative.json runs/baselines/hamiltonian_W10_relative.json --exp runs/tabular_q_W10 --out runs/tables/m4_W10.md --curves-dir runs/tables/curves
 ```

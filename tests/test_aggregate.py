@@ -66,10 +66,10 @@ METRICS_HEADER = (
 ENV = env_config_to_dict(EnvConfig(W=8))
 EVAL_SEED = 10_000
 
-#: Keys every summary row must have.
+#: Keys every summary row must have (``n_aborted`` / ``aborted``: M6, D5).
 SUMMARY_KEYS = {
     "label", "n_seeds", "seeds", "n_episodes", "mean_score", "ci95", "ci_kind", "per_seed_mean_scores",
-    "median_score", "max_score", "mean_steps", "cause_fractions",
+    "median_score", "max_score", "mean_steps", "cause_fractions", "n_aborted", "aborted",
 }
 
 #: seed -> final-evaluation episodes as (score, steps, cause). Seed means 3, 5, 4, 8, 10.
@@ -157,6 +157,17 @@ def make_five_seed_exp(root: Path, name: str = "five_seeds", extra: bool = False
     for seed in (10, 3, 0, 2, 1):  # creation order is not seed order
         write_run(exp_dir, seed, FIVE_SEEDS[seed], list(zip(STEPS, FIVE_CURVES[seed])), extra=extra)
     return exp_dir
+
+
+def write_aborted_run(exp_dir: Path, seed: int, curve, *, dir_name: str | None = None) -> Path:
+    """An aborted DQN run the way ``snake_rl.train`` leaves it (M6, D4):
+    ``config.yaml``, the ``metrics.csv`` rows written before the abort and
+    ``aborted.json``; no ``final_eval.json``."""
+    run_dir = write_run(exp_dir, seed, [], curve, finished=False, dir_name=dir_name)
+    marker = {"error": "non-finite DQN update at gradient step 120: loss nan, gradient norm nan",
+              "env_steps": 1472, "vec_steps": 184, "grad_steps": 119}
+    (run_dir / "aborted.json").write_text(json.dumps(marker), encoding="utf-8")
+    return run_dir
 
 
 @pytest.fixture
@@ -314,6 +325,104 @@ def test_load_runs_rejects_a_seed_counted_twice(five):
     write_run(five, 3, FIVE_SEEDS[3], [(0, 0.0)], dir_name="3_copy")
     with pytest.raises(ValueError, match="duplicate seed"):
         load_runs(five)
+
+
+# -------------------------------------------------------- aborted runs (M6, D5)
+def test_load_runs_skips_aborted_runs_and_reports_them_apart_from_unfinished_ones(five):
+    write_aborted_run(five, 4, [(0, 0.0), (100, 50.0)])  # config.yaml + metrics.csv + aborted.json
+    write_run(five, 5, FIVE_SEEDS[1], [(0, 0.0), (100, 50.0)], finished=False)  # config.yaml only
+    make_result(FIVE_SEEDS[1]).save(five / "6" / "final_eval.json")  # final_eval.json only
+    write_aborted_run(five, 7, [(0, 0.0)])
+    with pytest.warns(AggregateWarning) as record:
+        runs = load_runs(five)
+    assert [r.seed for r in runs] == [0, 1, 2, 3, 10]
+    messages = sorted(str(w.message) for w in record)
+    assert len(messages) == 2, messages
+    assert messages[0] == f"{five}: skipped 2 aborted run(s) (aborted.json): 4, 7"
+    assert messages[1] == f"{five}: skipped 2 unfinished run(s): 5, 6"  # the aborted ones are not unfinished
+
+
+def test_load_runs_warns_once_about_aborted_runs_when_nothing_is_unfinished(five):
+    write_aborted_run(five, 4, [(0, 0.0)])
+    with pytest.warns(AggregateWarning, match=r"skipped 1 aborted run\(s\) \(aborted\.json\): 4$") as record:
+        runs = load_runs(five)
+    assert len(record) == 1 and "unfinished" not in str(record[0].message)
+    assert [r.seed for r in runs] == [0, 1, 2, 3, 10]
+
+
+def test_load_runs_raises_when_every_run_is_aborted(tmp_path):
+    exp = tmp_path / "exp"
+    write_aborted_run(exp, 0, [(0, 0.0)])
+    write_aborted_run(exp, 1, [(0, 0.0), (100, 1.0)])
+    with pytest.warns(AggregateWarning, match="aborted"), pytest.raises(ValueError, match="no finished run"):
+        load_runs(exp)
+    with pytest.warns(AggregateWarning), pytest.raises(ValueError, match="no finished run"):
+        summarise_experiment(exp)
+    with pytest.warns(AggregateWarning), pytest.raises(ValueError, match="no finished run"):
+        learning_curve(exp)
+
+
+def test_summaries_count_the_aborted_runs(five, tmp_path):
+    reference = summarise_experiment(five)
+    assert reference["n_aborted"] == 0 and reference["aborted"] == []
+    write_aborted_run(five, 4, [(0, 0.0)])
+    write_aborted_run(five, 7, [(0, 0.0)], dir_name="7_crashed")
+    write_run(five, 8, FIVE_SEEDS[1], [(0, 0.0)], finished=False)  # unfinished: not aborted
+    with pytest.warns(AggregateWarning):
+        s = summarise_experiment(five)
+    assert s["n_aborted"] == 2 and s["aborted"] == ["4", "7_crashed"]
+    assert type(s["n_aborted"]) is int and all(isinstance(name, str) for name in s["aborted"])
+    assert {k: v for k, v in s.items() if k not in ("n_aborted", "aborted")} == {
+        k: v for k, v in reference.items() if k not in ("n_aborted", "aborted")}  # the statistics are untouched
+    assert SUMMARY_KEYS <= s.keys()
+    baseline = make_result(FIVE_SEEDS[1], "bfs").save(tmp_path / "bfs.json")
+    row = summarise_baseline(baseline)
+    assert row["n_aborted"] == 0 and row["aborted"] == [] and row.keys() == s.keys()
+
+
+def test_results_table_seeds_cell_shows_the_aborted_runs_and_is_unchanged_without_them(five):
+    plain = results_table([summarise_experiment(five)])
+    write_aborted_run(five, 4, [(0, 0.0)])
+    with pytest.warns(AggregateWarning):
+        with_aborted = results_table([summarise_experiment(five)])
+    lines = with_aborted.splitlines()
+    assert lines[:2] == plain.splitlines()[:2]  # the header is the same
+    assert lines[2] == ("| five_seeds | 5 (+1 aborted) | 2-6 | 6.00 +- 3.62 | seeds | 4.5 | 12 | 35.7 | "
+                        "0.50 | 0.29 | 0.14 | 0.07 |")
+    assert plain.splitlines()[2] == ("| five_seeds | 5 | 2-6 | 6.00 +- 3.62 | seeds | 4.5 | 12 | 35.7 | "
+                                     "0.50 | 0.29 | 0.14 | 0.07 |")
+    # Hand-built rows: without the key n_aborted = 0; with n_aborted = 0 the cell is the bare count.
+    row = {
+        "label": "tabular_q", "n_seeds": 5, "seeds": [0, 1, 2, 3, 4], "n_episodes": 100, "mean_score": 12.34,
+        "ci95": 0.8, "ci_kind": "seeds", "per_seed_mean_scores": [11.5, 12.0, 12.2, 12.9, 13.1],
+        "median_score": 12.5, "max_score": 31, "mean_steps": 140.2,
+        "cause_fractions": {"wall": 0.25, "self": 0.7, "starve": 0.05, "win": 0.0},
+    }
+    bare = "| tabular_q | 5 | 100 | 12.34 +- 0.80 | seeds | 12.5 | 31 | 140.2 | 0.25 | 0.70 | 0.05 | 0.00 |"
+    assert results_table([row]).splitlines()[2] == bare
+    assert results_table([{**row, "n_aborted": 0, "aborted": []}]).splitlines()[2] == bare
+    assert results_table([{**row, "n_aborted": 3, "aborted": ["5", "6", "7"]}]).splitlines()[2] == bare.replace(
+        "| 5 |", "| 5 (+3 aborted) |")
+
+
+def test_learning_curve_skips_aborted_runs(five):
+    reference = learning_curve(five)
+    write_aborted_run(five, 4, [(0, 77.0), (100, 77.0), (200, 77.0), (300, 77.0)])
+    with pytest.warns(AggregateWarning, match="aborted") as record:
+        curve = learning_curve(five)
+    assert len(record) == 1  # the aborted run neither contributes values nor removes steps
+    pd.testing.assert_frame_equal(curve, reference)
+    pd.testing.assert_frame_equal(curve, expected_five_curve(), rtol=1e-12)
+
+
+def test_cli_table_shows_aborted_runs(five, tmp_path, capsys):
+    write_aborted_run(five, 4, [(0, 0.0)])
+    out = tmp_path / "table.md"
+    with pytest.warns(AggregateWarning, match="aborted"):
+        assert main(["--exp", str(five), "--out", str(out)]) == 0
+    printed = capsys.readouterr().out
+    assert "| five_seeds | 5 (+1 aborted) | 2-6 |" in printed
+    assert out.read_text(encoding="utf-8") == printed
 
 
 def without_episodes(path: Path) -> Path:

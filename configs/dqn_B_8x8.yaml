@@ -1,0 +1,64 @@
+# DQN with the CNN on observation B (8 planes: head, body, food, body age, heading x 4),
+# 8x8 board, reward R0, relative actions (PLAN.md milestone M6). Same board, reward,
+# evaluation boards and budget as configs/dqn_A_8x8.yaml, so the two state
+# representations are compared like for like; the only differences are env.obs and the
+# network (CNN 3 x [3x3 conv, stride 1, padding 1; 32 / 64 / 64 channels] -> 512 -> 3,
+# adapted from the course's CustomCNN, see docs/RESOURCE_BASELINE.md and
+# snake_rl/agents/dqn/networks.py).
+#
+# gamma is 0.9 as in the A configurations (Part B's initial value was 0.99). device: see
+# the M6 benchmark in docs/PROGRESS.md (scripts/bench_update.py measures one gradient
+# step on cpu and cuda). Everything else in the agent block is the value of
+# configs/dqn_A_8x8.yaml.
+#
+# Run one seed (writes runs/dqn_B8_W8/<seed>/: config.yaml, metrics.csv, checkpoints/,
+# model.pt, final_eval.json; 125,504 gradient steps):
+#   python -m snake_rl.train --config configs/dqn_B_8x8.yaml --seed 0
+# Five seeds (the project rule):
+#   python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5
+# The M6 ablations are this file with --set; --set needs a new --exp (one experiment name is
+# one configuration, and a run directory is never overwritten):
+#   7 planes (no body-age plane, the non-Markov observation):
+#     --exp dqn_B7_W8 --set env.obs.age_plane=false
+#   3 planes (head, body, food only):
+#     --exp dqn_B3_W8 --set env.obs.age_plane=false env.obs.heading_planes=false
+#   no replay (one gradient step per vec-step on that step's own 128 transitions):
+#     --exp dqn_B8_W8_noreplay --set agent.replay=false
+#   no target network (the target is synchronised after every gradient step):
+#     --exp dqn_B8_W8_notarget --set agent.target_update_every=1
+#   neither:
+#     --exp dqn_B8_W8_noreplay_notarget --set agent.replay=false agent.target_update_every=1
+# (with scripts/run_matrix.py: the same --set values and --exp-prefix instead of --exp)
+exp: dqn_B8_W8
+env:
+  W: 8
+  action_mode: relative
+  starve_limit: null             # null -> max(100, W * W) = 100
+  obs: {kind: B, age_plane: true, heading_planes: true}   # 8 planes
+  reward: {variant: R0}
+agent:
+  kind: dqn
+  gamma: 0.9                     # as in configs/dqn_A_8x8.yaml
+  lr: 2.5e-4                     # Adam
+  batch_size: 256
+  buffer_size: 100000            # transitions
+  replay: true
+  learning_starts: 10000         # env steps collected before the first gradient step
+  grad_steps_per_vec_step: null  # null -> max(1, n_envs // 4) = 32: one gradient step per 4 env steps
+  target_update_every: 1000      # gradient steps between two hard target syncs
+  grad_clip: 10.0                # max global gradient norm
+  eps_start: 1.0
+  eps_end: 0.05
+  eps_decay_fraction: 0.2        # epsilon reaches eps_end after 20 % of total_env_steps
+  hidden: [512]                  # the fully connected layer after the convolutions (the resource's features_dim)
+  conv_channels: [32, 64, 64]    # three 3x3 convolutions, stride 1, padding 1
+  double: false                  # Double DQN is studied in M7
+  keep_checkpoints: true         # weights-only checkpoint at every evaluation
+  device: cuda                   # M6 benchmark (docs/PROGRESS.md): the CNN update is faster on the GPU
+  torch_threads: 2
+train:
+  n_envs: 128
+  total_env_steps: 512000
+  eval_every: 12800              # a multiple of n_envs; 40 evaluations + the one before any update
+  eval_episodes: 100
+  eval_seed: 10000

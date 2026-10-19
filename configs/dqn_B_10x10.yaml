@@ -1,0 +1,45 @@
+# DQN with the CNN on observation B (8 planes), 10x10 board, reward R0, relative actions
+# (PLAN.md milestone M6): the report configuration. Same board, reward, evaluation boards
+# and budget as configs/dqn_A_10x10.yaml; the only differences are env.obs and the network
+# (CNN 3 x [3x3 conv, 32 / 64 / 64 channels] -> 512 -> 3, see configs/dqn_B_8x8.yaml).
+#
+# Run one seed (writes runs/dqn_B8_W10/<seed>/; 253,504 gradient steps):
+#   python -m snake_rl.train --config configs/dqn_B_10x10.yaml --seed 0
+# Five seeds (the project rule), launched by the user in a separate terminal:
+#   python scripts/run_matrix.py --config configs/dqn_B_10x10.yaml --seeds 0 1 2 3 4 --jobs 5
+# Ablations: as listed in configs/dqn_B_8x8.yaml (--set needs a new --exp), with the
+# experiment names dqn_B7_W10, dqn_B3_W10, dqn_B8_W10_noreplay, dqn_B8_W10_notarget,
+# dqn_B8_W10_noreplay_notarget.
+exp: dqn_B8_W10
+env:
+  W: 10
+  action_mode: relative
+  starve_limit: null             # null -> max(100, W * W) = 100
+  obs: {kind: B, age_plane: true, heading_planes: true}   # 8 planes
+  reward: {variant: R0}
+agent:
+  kind: dqn
+  gamma: 0.9                     # as in configs/dqn_A_10x10.yaml
+  lr: 2.5e-4                     # Adam
+  batch_size: 256
+  buffer_size: 100000            # transitions
+  replay: true
+  learning_starts: 10000         # env steps collected before the first gradient step
+  grad_steps_per_vec_step: null  # null -> max(1, n_envs // 4) = 32: one gradient step per 4 env steps
+  target_update_every: 1000      # gradient steps between two hard target syncs
+  grad_clip: 10.0                # max global gradient norm
+  eps_start: 1.0
+  eps_end: 0.05
+  eps_decay_fraction: 0.2        # epsilon reaches eps_end after 20 % of total_env_steps
+  hidden: [512]                  # the fully connected layer after the convolutions
+  conv_channels: [32, 64, 64]    # three 3x3 convolutions, stride 1, padding 1
+  double: false                  # Double DQN is studied in M7
+  keep_checkpoints: true         # weights-only checkpoint at every evaluation
+  device: cuda                   # M6 benchmark (docs/PROGRESS.md): the CNN update is faster on the GPU
+  torch_threads: 2
+train:
+  n_envs: 128
+  total_env_steps: 1024000
+  eval_every: 12800              # a multiple of n_envs; 80 evaluations + the one before any update
+  eval_episodes: 100
+  eval_seed: 10000

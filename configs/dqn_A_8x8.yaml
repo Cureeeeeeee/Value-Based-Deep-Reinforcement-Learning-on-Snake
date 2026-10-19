@@ -35,6 +35,7 @@ agent:
   lr: 2.5e-4                     # Adam
   batch_size: 256
   buffer_size: 100000            # transitions
+  replay: true
   learning_starts: 10000         # env steps collected before the first gradient step
   grad_steps_per_vec_step: null  # null -> max(1, n_envs // 4) = 32: one gradient step per 4 env steps
   target_update_every: 1000      # gradient steps between two hard target syncs

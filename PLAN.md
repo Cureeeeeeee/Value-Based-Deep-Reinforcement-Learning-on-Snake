@@ -60,7 +60,7 @@ snake-rl/
     gui/app.py              # pygame：人玩 / agent 玩 + Q 值侧栏 / 回放
   configs/                  # 每个实验一份 yaml
   tests/                    # test_env.py test_vec_env.py test_obs.py test_rewards.py test_baselines.py；M4 起另有 test_tabular_q / test_train / test_evaluate_batched / test_aggregate / test_run_matrix 等
-  scripts/run_matrix.py     # 批量跑种子 × 配置（另有 check_env.py、bench_vec_env.py、gui_screenshots.py）
+  scripts/run_matrix.py     # 批量跑种子 × 配置（另有 check_env.py、bench_vec_env.py、bench_update.py、gui_screenshots.py）
   notebooks/results.ipynb   # Colab：从日志/checkpoint 重生成主图（提交要求）
 ```
 

@@ -1,11 +1,14 @@
-"""Deep Q-Network agent (PLAN.md milestone M5; Mnih et al. 2015).
+"""Deep Q-Network agent (PLAN.md milestones M5, M6; Mnih et al. 2015).
 
 Q-learning with a neural network ``Q(s, a; theta)`` in place of the table. The
 agent holds two networks of the same architecture - the online network
 ``theta``, which acts and is trained, and the target network ``theta^-``, a
 periodically refreshed copy - and an Adam optimiser. It holds no RNG: the
 initial weights are a function of ``seed``, exploration and replay sampling
-draw from generators the caller passes in.
+draw from generators the caller passes in. The architecture follows from the
+observation shape (``networks.build_q_network``): an MLP on the 11 features
+of observation A, a CNN on the ``(C, W, W)`` planes of observation B; nothing
+below depends on which one it is.
 
 One gradient step (:meth:`DQNAgent.update`)
 -------------------------------------------
@@ -205,7 +208,7 @@ class DQNAgent:
         # generators out of it.)
         with torch.random.fork_rng(devices=[]):
             torch.default_generator.manual_seed(int(seed))
-            q_net = build_q_network(self.obs_shape, self.n_actions, self.cfg.hidden)
+            q_net = build_q_network(self.obs_shape, self.n_actions, self.cfg.hidden, self.cfg.conv_channels)
         self.q_net = q_net.to(self.device)
         self.target_net = copy.deepcopy(self.q_net)
         self.target_net.requires_grad_(False)  # only ever written by a copy of q_net
@@ -328,7 +331,11 @@ class DQNAgent:
             "grad_steps": self.grad_steps,
             "obs_shape": list(self.obs_shape),
             "n_actions": self.n_actions,
-            "config": {**asdict(self.cfg), "hidden": list(self.cfg.hidden)},
+            "config": {
+                **asdict(self.cfg),
+                "hidden": list(self.cfg.hidden),
+                "conv_channels": list(self.cfg.conv_channels),
+            },
         }
         if include_optimizer:
             payload["optimizer"] = _to_cpu(self.optimizer.state_dict())
@@ -347,7 +354,8 @@ class DQNAgent:
         checkpoint saved without the optimiser gets a fresh one.
         """
         payload = torch.load(Path(path), map_location="cpu", weights_only=True)
-        # A field added to DQNConfig after the checkpoint was written takes its default.
+        # A field added to DQNConfig after the checkpoint was written takes its
+        # default (an M5 checkpoint has no ``replay`` and no ``conv_channels``).
         known = {f.name for f in fields(DQNConfig)}
         cfg = DQNConfig(**{key: value for key, value in payload["config"].items() if key in known})
         if device is not None:

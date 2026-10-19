@@ -1,9 +1,11 @@
-"""DQN core (PLAN.md milestone M5): the oracle for ``snake_rl/agents/dqn``.
+"""DQN core (PLAN.md milestones M5 and M6): the oracle for ``snake_rl/agents/dqn``.
 
-Everything here is derived from the M5 specification (sections D0-D3), from
-the textbook algorithm (Mnih et al. 2015; van Hasselt et al. 2016 for the
-Double DQN target) and from the environments - never from the implementation
-under test (``config.py``, ``networks.py``, ``replay.py``, ``agent.py``).
+Everything here is derived from the M5 specification (sections D0-D3) and
+the M6 specification (D0-D2: the CNN on observation B, the ``replay`` and
+``conv_channels`` fields), from the textbook algorithm (Mnih et al. 2015; van
+Hasselt et al. 2016 for the Double DQN target) and from the environments -
+never from the implementation under test (``config.py``, ``networks.py``,
+``replay.py``, ``agent.py``).
 
 Contract under test.
 
@@ -11,7 +13,13 @@ Contract under test.
   the package ``snake_rl.agents.dqn``) does not import torch.
 * ``MLP`` / ``build_q_network``: Linear -> ReLU per hidden layer, then a Linear
   to the action values without activation; ``hidden = ()`` is a linear
-  Q-function. Observation shapes that are not 1-D wait for milestone M6.
+  Q-function.
+* ``CNN`` (M6, for the grid observation B): ``Conv2d(3x3, stride 1, padding 1)
+  -> ReLU`` per width in ``conv_channels``, a ``Flatten``, then the ``MLP`` of
+  ``hidden`` on ``n_flatten = conv_channels[-1] * H * W`` features;
+  ``conv_channels = ()`` feeds the flattened grid straight into the MLP.
+  ``build_q_network`` dispatches on the observation shape: 1-D -> ``MLP``,
+  3-D -> ``CNN``, anything else -> ``ValueError``.
 * ``ReplayBuffer``: a FIFO ring over preallocated storage. ``add`` copies its
   arguments; ``sample`` draws ``idx = rng.integers(0, len(buffer),
   size=batch_size)`` - one call, uniform with replacement over the stored
@@ -47,46 +55,49 @@ after up to 310 updates (measured distance: see ``TEXTBOOK_ATOL``).
 
 How the tests look inside the implementation. Only through the attributes of
 the spec (``q_net``, ``target_net``, ``optimizer``, ``grad_steps``, ``cfg``,
-``device``) and through torch itself: the ``torch.nn.Linear`` modules of a
+``device``; ``cnn``, ``n_flatten`` and ``head`` of the ``CNN``) and through
+torch itself: the ``torch.nn.Linear`` and ``torch.nn.Conv2d`` modules of a
 network in registration order (to set and read weights), and the first-moment
 buffer of ``torch.optim.Adam`` after its first step, which is ``(1 - beta1)``
 times the gradient the optimiser consumed (to read the clipped gradient).
 The replay storage is read through the sampling protocol itself, with a
 generator whose ``integers`` returns scripted indices.
 
-Layout: config, networks, replay buffer, agent construction, action
-selection, update on hand-built transitions, target network, failure and
-purity, textbook equivalence (the central test), save / load, CUDA, learning
-sanity.
+Layout: config, networks (MLP, then the CNN of M6), replay buffer, agent
+construction, action selection, update on hand-built transitions, target
+network, failure and purity, textbook equivalence (the central test), the
+agent on grid observations (M6), save / load, CUDA, learning sanity.
 """
 
 from __future__ import annotations
 
 import copy
 import math
+import re
 import subprocess
 import sys
 import time
 from collections import deque
-from dataclasses import FrozenInstanceError, fields
+from dataclasses import FrozenInstanceError, fields, replace
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
+import torch.nn.functional as F
 
 from snake_rl.agents import Policy
 from snake_rl.agents.baselines import RandomPolicy
 from snake_rl.agents.dqn.agent import DQNAgent
 from snake_rl.agents.dqn.config import DQNConfig
-from snake_rl.agents.dqn.networks import MLP, build_q_network
+from snake_rl.agents.dqn.networks import CNN, MLP, build_q_network
 from snake_rl.agents.dqn.replay import Batch, ReplayBuffer
 from snake_rl.agents.schedules import linear_schedule
 from snake_rl.env.common import RIGHT
 from snake_rl.env.obs import A_DANGER_STRAIGHT, A_HEADING, N_FEATURES_A
 from snake_rl.env.vec_env import VecSnakeEnv
 from snake_rl.evaluate import DEFAULT_EVAL_SEED, evaluate, evaluate_batched
-from tests.helpers import FAR_FOOD, TURN_LEFT, EnvConfig, RewardConfig
+from tests.helpers import FAR_FOOD, TURN_LEFT, EnvConfig, ObsConfig, RewardConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OBS_DIM = N_FEATURES_A  # 11
@@ -185,6 +196,7 @@ CONFIG_DEFAULTS = {
     "lr": 2.5e-4,
     "batch_size": 256,
     "buffer_size": 100_000,
+    "replay": True,
     "learning_starts": 10_000,
     "grad_steps_per_vec_step": None,
     "target_update_every": 1_000,
@@ -193,6 +205,7 @@ CONFIG_DEFAULTS = {
     "eps_end": 0.05,
     "eps_decay_fraction": 0.2,
     "hidden": (256, 256),
+    "conv_channels": (32, 64, 64),
     "double": False,
     "keep_checkpoints": True,
     "device": "auto",
@@ -210,8 +223,16 @@ def test_config_defaults_and_immutability():
         cfg.gamma = 0.5
     with pytest.raises(FrozenInstanceError):
         cfg.double = True
+    with pytest.raises(FrozenInstanceError):
+        cfg.replay = False
     assert DQNConfig(gamma=0.9, hidden=(64,)) == DQNConfig(gamma=0.9, hidden=(64,)) != cfg
     assert DQNConfig(hidden=()).hidden == ()
+    assert DQNConfig(replay=False).replay is False and DQNConfig(replay=False) != cfg
+    # M6: a list (YAML, checkpoint) becomes a tuple for conv_channels as for hidden; () = no convolution.
+    assert DQNConfig(conv_channels=[8, 8]).conv_channels == (8, 8)
+    assert type(DQNConfig(conv_channels=[8, 8]).conv_channels) is tuple
+    assert DQNConfig(conv_channels=()).conv_channels == () and DQNConfig(conv_channels=[]).conv_channels == ()
+    assert DQNConfig(conv_channels=(16,)) == DQNConfig(conv_channels=[16]) != cfg
 
 
 def test_config_and_package_import_without_torch():
@@ -223,6 +244,7 @@ def test_config_and_package_import_without_torch():
         "import snake_rl.agents.dqn\n"
         "from snake_rl.agents.dqn.config import DQNConfig\n"
         "assert DQNConfig().batch_size == 256\n"
+        "assert DQNConfig().replay is True and DQNConfig().conv_channels == (32, 64, 64)\n"
         "print('torch-loaded' if 'torch' in sys.modules else 'torch-free')\n"
     )
     out = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True, timeout=120)
@@ -293,10 +315,257 @@ def test_build_q_network_gives_an_mlp_for_observation_a():
     assert [tuple(layer.weight.shape) for layer in linear_layers(linear)] == [(4, 11)]
 
 
-@pytest.mark.parametrize("obs_shape", [(3, 8, 8), (4, 10, 10), (8, 8)])
-def test_build_q_network_defers_grid_observations_to_m6(obs_shape):
-    with pytest.raises(NotImplementedError, match="M6"):
-        build_q_network(obs_shape, N_ACTIONS, (64, 64))
+# ------------------------------------------------------------- D1 (M6): CNN
+#: Grid observations of the spec: 8 planes on 8x8, 3 planes (no age plane, no
+#: heading planes) on 10x10, 7 planes (no age plane) on 8x8, 8 planes on 10x10.
+GRID_SHAPES = [(8, 8, 8), (3, 10, 10), (7, 8, 8), (8, 10, 10)]
+DEFAULT_CONV = (32, 64, 64)
+#: (in_shape, conv_channels, hidden) of the functional-reference cases.
+CNN_CASES = [
+    ((8, 8, 8), (4, 6), (16,)),
+    ((3, 10, 10), (5,), (8, 8)),
+    ((7, 8, 8), (3, 3, 3), ()),
+    ((8, 10, 10), (), (16,)),
+    ((8, 8, 8), (), ()),
+]
+
+
+def conv_layers(net: torch.nn.Module) -> list[torch.nn.Conv2d]:
+    """The ``Conv2d`` modules of a network in registration (= forward) order."""
+    return [m for m in net.modules() if isinstance(m, torch.nn.Conv2d)]
+
+
+def randomise_all(net: torch.nn.Module, seed: int) -> None:
+    """Normal weights scaled by the fan-in and normal biases for every ``Conv2d``
+    and ``Linear`` layer, from a local generator: action values that vary with
+    the observation and stay of order one through several layers."""
+    generator = torch.Generator().manual_seed(seed)
+    with torch.no_grad():
+        for layer in [m for m in net.modules() if isinstance(m, (torch.nn.Conv2d, torch.nn.Linear))]:
+            fan_in = layer.weight[0].numel()
+            layer.weight.copy_(torch.randn(layer.weight.shape, generator=generator) / math.sqrt(fan_in))
+            layer.bias.copy_(0.1 * torch.randn(layer.bias.shape, generator=generator))
+
+
+def cnn_reference(net: torch.nn.Module, x: np.ndarray) -> np.ndarray:
+    """Spec D1 (M6) in float64 with torch's functional operations: ``conv2d``
+    (stride 1, padding 1) -> ``relu`` per convolution layer, flatten, then the
+    MLP formula (Linear -> ReLU per hidden layer, a Linear at the end)."""
+    h = torch.from_numpy(np.asarray(x, dtype=np.float64))
+    for conv in conv_layers(net):
+        h = F.relu(F.conv2d(h, conv.weight.detach().double(), conv.bias.detach().double(), stride=1, padding=1))
+    h = h.flatten(1)
+    linears = linear_layers(net)
+    for i, layer in enumerate(linears):
+        h = h @ layer.weight.detach().double().T + layer.bias.detach().double()
+        if i < len(linears) - 1:
+            h = F.relu(h)
+    return h.numpy()
+
+
+def random_grid(rng: np.random.Generator, n: int, shape: tuple[int, int, int] = (8, 8, 8)) -> np.ndarray:
+    """Synthetic grid observations ``(n, C, H, W)`` float32, standard normal.
+    (The planes of B lie in [0, 1]; a zero-mean input keeps the action values
+    of a randomised network from sharing one common mode across observations,
+    which would make every greedy action the same.)"""
+    return rng.normal(size=(n, *shape)).astype(np.float32)
+
+
+@pytest.mark.parametrize("in_shape", GRID_SHAPES)
+def test_cnn_structure_is_conv_relu_per_channel_count_then_flatten_then_the_mlp(in_shape):
+    C, H, W = in_shape
+    net = CNN(in_shape, N_ACTIONS, DEFAULT_CONV, (512,))
+    assert isinstance(net, torch.nn.Module)
+    # self.cnn = Sequential(Conv2d, ReLU, Conv2d, ReLU, Conv2d, ReLU, Flatten).
+    assert isinstance(net.cnn, torch.nn.Sequential)
+    modules = list(net.cnn)
+    assert len(modules) == 2 * len(DEFAULT_CONV) + 1 and isinstance(modules[-1], torch.nn.Flatten)
+    previous = C
+    for i, c in enumerate(DEFAULT_CONV):
+        conv, relu = modules[2 * i], modules[2 * i + 1]
+        assert isinstance(conv, torch.nn.Conv2d) and isinstance(relu, torch.nn.ReLU), i
+        assert conv.in_channels == previous and conv.out_channels == c
+        assert conv.kernel_size == (3, 3) and conv.stride == (1, 1) and conv.padding == (1, 1)
+        assert conv.dilation == (1, 1) and conv.groups == 1 and conv.bias is not None
+        assert tuple(conv.weight.shape) == (c, previous, 3, 3) and tuple(conv.bias.shape) == (c,)
+        previous = c
+    assert [tuple(layer.weight.shape) for layer in conv_layers(net)] == [(32, C, 3, 3), (64, 32, 3, 3), (64, 64, 3, 3)]
+    # Padding keeps H and W: n_flatten = last channel count * H * W.
+    assert net.n_flatten == 64 * H * W and type(net.n_flatten) is int
+    # self.head = MLP(n_flatten, n_actions, hidden).
+    assert isinstance(net.head, MLP)
+    assert [tuple(layer.weight.shape) for layer in linear_layers(net.head)] == [(512, 64 * H * W), (N_ACTIONS, 512)]
+    assert [tuple(layer.weight.shape) for layer in linear_layers(net)] == [(512, 64 * H * W), (N_ACTIONS, 512)]
+    n_params = (
+        (32 * C * 9 + 32) + (64 * 32 * 9 + 64) + (64 * 64 * 9 + 64)
+        + (64 * H * W * 512 + 512) + (512 * N_ACTIONS + N_ACTIONS)
+    )
+    assert sum(p.numel() for p in net.parameters()) == n_params
+    assert all(key.startswith(("cnn.", "head.")) for key in net.state_dict())
+    x = torch.from_numpy(random_grid(np.random.default_rng(0), 5, in_shape))
+    out = net(x)
+    assert out.shape == (5, N_ACTIONS) and out.dtype == torch.float32
+    assert net(x[:1]).shape == (1, N_ACTIONS)
+    # ``conv_channels`` and ``hidden`` are any sequences of ints.
+    small = CNN(in_shape, 4, [2, 3], [5])
+    assert [tuple(layer.weight.shape) for layer in conv_layers(small)] == [(2, C, 3, 3), (3, 2, 3, 3)]
+    assert [tuple(layer.weight.shape) for layer in linear_layers(small)] == [(5, 3 * H * W), (4, 5)]
+    assert small.n_flatten == 3 * H * W
+
+
+@pytest.mark.parametrize("in_shape", GRID_SHAPES)
+def test_cnn_without_convolutions_flattens_the_grid_into_the_mlp(in_shape):
+    C, H, W = in_shape
+    net = CNN(in_shape, 4, (), (16, 8))
+    assert isinstance(net.cnn, torch.nn.Sequential) and len(list(net.cnn)) == 1
+    assert isinstance(list(net.cnn)[0], torch.nn.Flatten) and conv_layers(net) == []
+    assert net.n_flatten == C * H * W and type(net.n_flatten) is int
+    assert isinstance(net.head, MLP)
+    assert [tuple(layer.weight.shape) for layer in linear_layers(net)] == [(16, C * H * W), (8, 16), (4, 8)]
+    assert sum(p.numel() for p in net.parameters()) == (C * H * W * 16 + 16) + (16 * 8 + 8) + (8 * 4 + 4)
+    randomise(net, seed=1)
+    x = random_grid(np.random.default_rng(2), 6, in_shape)
+    with torch.no_grad():
+        out = net(torch.from_numpy(x)).numpy()
+    want = numpy_forward(net, x.reshape(6, -1))  # the MLP on the row-major flattened grid
+    assert out.shape == (6, 4)
+    assert np.allclose(out, want, rtol=1e-5, atol=1e-5 * np.abs(want).max())
+    # Without any hidden layer: a linear Q-function of the C * H * W cells.
+    linear = CNN(in_shape, 3, (), ())
+    assert conv_layers(linear) == [] and len(linear_layers(linear)) == 1 and len(list(linear.parameters())) == 2
+    assert tuple(linear_layers(linear)[0].weight.shape) == (3, C * H * W)
+
+
+@pytest.mark.parametrize("case", CNN_CASES, ids=lambda case: f"{case[0]}-conv{case[1]}-hidden{case[2]}")
+def test_cnn_forward_matches_the_functional_reference(case):
+    """``forward`` against ``F.conv2d`` / ``relu`` / flatten / the MLP formula
+    on randomised weights, in float64, at 1e-5 of the output scale."""
+    in_shape, conv_channels, hidden = case
+    net = CNN(in_shape, 4, conv_channels, hidden)
+    assert len(conv_layers(net)) == len(conv_channels) and len(linear_layers(net)) == len(hidden) + 1
+    randomise_all(net, seed=len(conv_channels) + 10 * len(hidden))
+    x = random_grid(np.random.default_rng(len(conv_channels)), 32, in_shape)
+    with torch.no_grad():
+        out = net(torch.from_numpy(x)).numpy()
+    want = cnn_reference(net, x)
+    assert out.shape == want.shape == (32, 4) and out.dtype == np.float32
+    scale = np.abs(want).max()
+    assert scale > 0.01, scale
+    assert np.allclose(out, want, rtol=1e-5, atol=1e-5 * scale)
+    assert (want < 0).any()  # the action values are not rectified
+    if conv_channels:  # the reference is not trivially satisfied: the convolutions do change the output
+        with torch.no_grad():
+            conv_layers(net)[0].weight.mul_(-1.0)
+            flipped = net(torch.from_numpy(x)).numpy()
+        assert np.abs(flipped - out).max() > 1e-3 * scale
+
+
+def test_cnn_applies_relu_after_every_convolution_and_hidden_layer_but_not_after_the_last():
+    # One convolution of one channel on a 1x2x2 grid with a known kernel, no hidden layer.
+    net = CNN((1, 2, 2), 2, (1,), ())
+    (conv,) = conv_layers(net)
+    (last,) = linear_layers(net)
+    with torch.no_grad():
+        conv.weight.zero_()
+        conv.weight[0, 0, 1, 1] = 1.0  # the centre tap: the convolution is the identity ...
+        conv.bias.fill_(-0.5)  # ... minus 0.5, then ReLU
+        last.weight.copy_(torch.tensor([[1.0, 1.0, 1.0, 1.0], [-1.0, 0.0, 0.0, -1.0]]))
+        last.bias.copy_(torch.tensor([0.25, -0.75]))
+        out = net(torch.tensor([[[[1.0, 0.0], [2.0, 0.25]]], [[[0.0, 0.0], [0.0, 0.0]]]]))
+    # relu(x - 0.5) = [0.5, 0, 1.5, 0] and [0, 0, 0, 0]: Q = [2.25, -1.25] and [0.25, -0.75]. Without the
+    # ReLU after the convolution the first row would be [1.5, -1.0]; with a ReLU on the output no action
+    # value would be negative.
+    assert out.tolist() == [[2.25, -1.25], [0.25, -0.75]]
+    # The head keeps the MLP rule: ReLU between its layers, none after the last.
+    net = CNN((1, 2, 2), 2, (), (2,))
+    first, last = linear_layers(net)
+    with torch.no_grad():
+        first.weight.copy_(torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]))
+        first.bias.zero_()
+        last.weight.copy_(torch.tensor([[1.0, -1.0], [2.0, 3.0]]))
+        last.bias.copy_(torch.tensor([0.5, -0.5]))
+        out = net(torch.tensor([[[[1.0, 9.0], [9.0, -2.0]]], [[[-1.0, 9.0], [9.0, 3.0]]]]))
+    assert out.tolist() == [[1.5, 1.5], [-2.5, 8.5]]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        dict(in_shape=(8, 8)), dict(in_shape=(2, 3, 4, 5)), dict(in_shape=(8,)), dict(in_shape=(0, 8, 8)),
+        dict(in_shape=(8, 0, 8)), dict(in_shape=(8, 8, -1)), dict(conv_channels=(0,)), dict(conv_channels=(16, -1)),
+        dict(conv_channels=(8, 0, 8)), dict(n_actions=0), dict(n_actions=-3), dict(hidden=(0,)), dict(hidden=(16, -8)),
+    ],
+    ids=lambda bad: ",".join(f"{k}={v}" for k, v in bad.items()),
+)
+def test_cnn_rejects_bad_sizes(bad):
+    settings = dict(in_shape=(8, 8, 8), n_actions=3, conv_channels=(4,), hidden=(8,))
+    settings.update(bad)
+    with pytest.raises(ValueError):
+        CNN(settings["in_shape"], settings["n_actions"], settings["conv_channels"], settings["hidden"])
+
+
+def test_build_q_network_dispatches_on_the_observation_shape():
+    # 1-D: the MLP, whatever conv_channels says.
+    mlp = build_q_network((OBS_DIM,), N_ACTIONS, (32, 16), (4, 4))
+    assert isinstance(mlp, MLP) and not isinstance(mlp, CNN) and conv_layers(mlp) == []
+    assert [tuple(layer.weight.shape) for layer in linear_layers(mlp)] == [(32, 11), (16, 32), (3, 16)]
+    # 3-D: the CNN with the channel counts given ...
+    cnn = build_q_network((8, 8, 8), N_ACTIONS, (16,), (4, 6))
+    assert isinstance(cnn, CNN)
+    assert [tuple(layer.weight.shape) for layer in conv_layers(cnn)] == [(4, 8, 3, 3), (6, 4, 3, 3)]
+    assert [tuple(layer.weight.shape) for layer in linear_layers(cnn)] == [(16, 6 * 64), (N_ACTIONS, 16)]
+    # ... (32, 64, 64) when none are given ...
+    default = build_q_network((3, 10, 10), 4, (512,))
+    assert isinstance(default, CNN) and default.n_flatten == 64 * 100
+    assert [tuple(layer.weight.shape) for layer in conv_layers(default)] == [(32, 3, 3, 3), (64, 32, 3, 3), (64, 64, 3, 3)]
+    assert [tuple(layer.weight.shape) for layer in linear_layers(default)] == [(512, 6400), (4, 512)]
+    # ... and the "MLP on B" ablation with conv_channels = ().
+    flat = build_q_network((7, 8, 8), N_ACTIONS, (16,), ())
+    assert isinstance(flat, CNN) and conv_layers(flat) == [] and flat.n_flatten == 7 * 64
+    assert [tuple(layer.weight.shape) for layer in linear_layers(flat)] == [(16, 7 * 64), (N_ACTIONS, 16)]
+    # Any other shape: a ValueError that names the shape (no NotImplementedError "M6" any more).
+    for shape in ((8, 8), (2, 3, 4, 5)):
+        with pytest.raises(ValueError, match=re.escape(str(shape))):
+            build_q_network(shape, N_ACTIONS, (16,))
+        with pytest.raises(ValueError):
+            build_q_network(shape, N_ACTIONS, (16,), (4,))
+
+
+def grid_agent(seed: int = 0, in_shape: tuple[int, int, int] = (8, 8, 8), **kwargs) -> DQNAgent:
+    """Agent on a grid observation with a small CNN (two layers of four
+    channels, one hidden layer of 16), on the CPU."""
+    settings = dict(conv_channels=(4, 4), hidden=(16,), lr=1e-2)
+    settings.update(kwargs)
+    return DQNAgent(in_shape, N_ACTIONS, cpu_cfg(**settings), seed=seed)
+
+
+def test_cnn_agent_initial_weights_are_a_function_of_the_seed_alone():
+    a = grid_agent(seed=5)
+    assert a.obs_shape == (8, 8, 8) and isinstance(a.q_net, CNN) and isinstance(a.target_net, CNN)
+    assert [tuple(layer.weight.shape) for layer in conv_layers(a.q_net)] == [(4, 8, 3, 3), (4, 4, 3, 3)]
+    assert [tuple(layer.weight.shape) for layer in linear_layers(a.q_net)] == [(16, 256), (N_ACTIONS, 16)]
+    assert same(weights(a.q_net), weights(a.target_net)) and a.target_net is not a.q_net
+    (group,) = a.optimizer.param_groups
+    assert [id(p) for p in group["params"]] == [id(p) for p in a.q_net.parameters()]
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(999)
+        torch.rand(17)  # wherever the global generator stands ...
+        b = grid_agent(seed=5)
+    assert same(weights(a.q_net), weights(b.q_net))  # ... seed 5 gives these weights
+    others = [weights(grid_agent(seed=s).q_net) for s in (0, 6)]
+    assert not any(same(weights(a.q_net), other) for other in others) and not same(others[0], others[1])
+    # The convolutions are seeded too, not only the head, and nothing is zero or constant.
+    assert not torch.equal(conv_layers(a.q_net)[0].weight, conv_layers(grid_agent(seed=0).q_net)[0].weight)
+    for layer in conv_layers(a.q_net) + linear_layers(a.q_net):
+        assert layer.weight.std() > 0.01
+
+
+def test_constructing_a_cnn_agent_leaves_the_global_torch_rng_alone():
+    before = torch.random.get_rng_state()
+    grid_agent(seed=3)
+    DQNAgent((3, 10, 10), 4, cpu_cfg(conv_channels=(), hidden=()), seed=8)
+    DQNAgent((7, 8, 8), 4, cpu_cfg(conv_channels=(2,), hidden=(8, 8)), seed=8)
+    assert torch.equal(torch.random.get_rng_state(), before)
 
 
 # ------------------------------------------------------------- D2: replay buffer
@@ -1312,12 +1581,146 @@ def test_double_flag_changes_the_training_trajectory():
     assert not same(run(False), run(True))
 
 
+# ------------------------------------------------------------- M6: the agent on grid observations
+def test_cnn_agent_action_selection_on_grid_observations():
+    """``q_values`` / ``act`` / ``act_batch`` / ``act_epsilon`` on ``(N, C, W, W)``
+    observations: the online CNN, the argmax, the RNG protocol."""
+    agent = grid_agent(seed=3)
+    randomise_all(agent.q_net, seed=1)
+    randomise_all(agent.target_net, seed=2)  # a target network that differs: q_values must not read it
+    obs = random_grid(np.random.default_rng(0), 40)
+    q = agent.q_values(obs)
+    assert isinstance(q, np.ndarray) and q.shape == (40, N_ACTIONS) and q.dtype == np.float32
+    want = cnn_reference(agent.q_net, obs)
+    scale = np.abs(want).max()
+    assert np.allclose(q, want, rtol=1e-5, atol=1e-5 * scale)
+    assert np.abs(q - cnn_reference(agent.target_net, obs)).max() > 0.1 * scale
+    one = agent.q_values(obs[:1])
+    assert one.shape == (1, N_ACTIONS) and np.allclose(one, q[:1], rtol=1e-5, atol=1e-5 * scale)
+
+    batch = agent.act_batch(obs)
+    assert isinstance(batch, np.ndarray) and batch.shape == (40,) and batch.dtype == np.int64
+    assert np.array_equal(batch, want.argmax(axis=1)) and np.array_equal(batch, q.argmax(axis=1))
+    assert len(set(batch.tolist())) > 1  # the greedy action depends on the observation
+    for i in range(40):
+        action = agent.act(obs[i])
+        assert type(action) is int and action == batch[i], f"row {i}"
+    assert agent.act(obs[0], None) == agent.act(obs[0], env=None) == batch[0]
+
+    rng, twin = np.random.default_rng(99), np.random.default_rng(99)
+    obs_rng = np.random.default_rng(1)
+    for n, epsilon in ((1, 0.3), (16, 0.3), (7, 0.0), (64, 1.0)):
+        some = random_grid(obs_rng, n)
+        actions = agent.act_epsilon(some, epsilon, rng)
+        assert isinstance(actions, np.ndarray) and actions.shape == (n,) and actions.dtype == np.int64
+        greedy = cnn_reference(agent.q_net, some).argmax(axis=1)
+        assert np.array_equal(actions, protocol_actions(greedy, epsilon, N_ACTIONS, twin)), f"batch of {n}"
+        assert rng.bit_generator.state == twin.bit_generator.state
+
+    # Acting records no gradient and changes nothing.
+    assert all(p.grad is None for p in agent.q_net.parameters()) and agent.grad_steps == 0
+    # A batch of the wrong shape is refused rather than reshaped.
+    with pytest.raises(ValueError):
+        agent.q_values(obs[:, 0])  # (40, 8, 8)
+    with pytest.raises(ValueError):
+        agent.act(obs[:1])  # a batch where one observation is expected
+
+
+def test_cnn_agent_ties_pick_the_lowest_index():
+    # No convolution, no hidden layer: a linear Q-function of the 3 * 2 * 2 = 12 flattened cells,
+    # with Q(e_k) = column k for the first five cells (zero bias): exact ties.
+    columns = [
+        ([1.0, 1.0, 0.0, 0.0], 0),
+        ([0.0, 2.0, 2.0, 2.0], 1),
+        ([-1.0, -1.0, -1.0, -1.0], 0),
+        ([0.0, 1.0, 3.0, 3.0], 2),
+        ([7.0, 0.0, 0.0, 7.0], 0),
+    ]
+    agent = DQNAgent((3, 2, 2), 4, cpu_cfg(conv_channels=(), hidden=()), seed=0)
+    assert isinstance(agent.q_net, CNN)
+    weight = np.zeros((4, 12))
+    weight[:, :5] = np.array([column for column, _ in columns]).T
+    set_linear(agent.q_net, weight, np.zeros(4))
+    obs = np.eye(12, dtype=np.float32)[:5].reshape(5, 3, 2, 2)  # one-hot cells 0 .. 4 as grids
+    expected = [best for _, best in columns]
+    assert agent.q_values(obs).T.tolist() == [[1, 0, -1, 0, 7], [1, 2, -1, 1, 0], [0, 2, -1, 3, 0], [0, 2, -1, 3, 7]]
+    assert agent.act_batch(obs).tolist() == expected
+    assert [agent.act(row) for row in obs] == expected
+    assert agent.act_epsilon(obs, 0.0, np.random.default_rng(0)).tolist() == expected
+    # All action values equal (zero convolutions, zero head, one bias): action 0 everywhere.
+    flat = grid_agent(seed=0)
+    with torch.no_grad():
+        for layer in conv_layers(flat.q_net) + linear_layers(flat.q_net):
+            layer.weight.zero_()
+            layer.bias.zero_()
+        linear_layers(flat.q_net)[-1].bias.fill_(0.5)
+    some = random_grid(np.random.default_rng(2), 50)
+    assert flat.q_values(some).tolist() == [[0.5, 0.5, 0.5]] * 50
+    assert not flat.act_batch(some).any() and flat.act(some[0]) == 0
+
+
+@pytest.mark.parametrize(
+    "obs_cfg, W",
+    [
+        (ObsConfig(kind="B"), 8),
+        (ObsConfig(kind="B", age_plane=False, heading_planes=False), 10),
+        (ObsConfig(kind="B", age_plane=False), 8),
+    ],
+    ids=["B8-W8", "B3-W10", "B7-W8"],
+)
+def test_cnn_agent_update_on_real_grid_transitions_is_finite_and_moves_the_weights(obs_cfg, W):
+    """Transitions of a real ``VecSnakeEnv`` on observation B, passed as the
+    trainer passes them (``info["final_obs"]``, ``terminated`` only), through
+    a ``Batch`` and through a ``ReplayBuffer`` of the grid shape."""
+    env = VecSnakeEnv(EnvConfig(W=W, starve_limit=30, obs=obs_cfg), n_envs=16, seed=5)
+    assert env.obs_shape == (obs_cfg.n_planes, W, W)
+    agent = DQNAgent(env.obs_shape, env.n_actions, cpu_cfg(conv_channels=(4, 4), hidden=(16,), lr=1e-3,
+                                                              target_update_every=5), seed=1)
+    assert isinstance(agent.q_net, CNN) and agent.obs_shape == env.obs_shape
+    buffer = ReplayBuffer(500, env.obs_shape)
+    rng = np.random.default_rng(0)
+    obs = env.reset()
+    n_terminated = n_truncated = 0
+    for step in range(1, 11):
+        actions = rng.integers(0, env.n_actions, size=16)
+        next_obs, reward, terminated, truncated, info = env.step(actions)
+        assert obs.shape == (16, *env.obs_shape) and obs.dtype == np.float32
+        batch = Batch(obs=obs, actions=actions.astype(np.int64), rewards=reward.astype(np.float32),
+                      next_obs=info["final_obs"], terminated=terminated)
+        buffer.add(obs, actions, reward, info["final_obs"], terminated)
+        before, target_before = weights(agent.q_net), weights(agent.target_net)
+        first_conv = conv_layers(agent.q_net)[0].weight.detach().clone()
+        out = agent.update(batch)
+        assert set(out) == STAT_KEYS and all(type(v) is float and math.isfinite(v) for v in out.values()), step
+        assert out["grad_norm"] > 0.0 and agent.grad_steps == step
+        after = weights(agent.q_net)
+        assert not same(after, before)
+        assert not torch.equal(conv_layers(agent.q_net)[0].weight, first_conv)  # the convolutions train too
+        if step % 5 == 0:
+            assert same(weights(agent.target_net), after), f"step {step}: no sync"
+        else:
+            assert same(weights(agent.target_net), target_before), f"step {step}: the target network moved"
+        n_terminated += int(terminated.sum())
+        n_truncated += int(truncated.sum())
+        obs = next_obs
+    assert n_terminated > 0  # random play on a small board dies within 160 environment steps
+    # Replayed batches of the grid shape train as well.
+    for _ in range(3):
+        out = agent.update(buffer.sample(32, rng))
+        assert all(math.isfinite(v) for v in out.values())
+    assert agent.grad_steps == 13
+    q = agent.q_values(obs)
+    assert q.shape == (16, env.n_actions) and q.dtype == np.float32 and np.isfinite(q).all()
+    assert all(torch.isfinite(v).all() for v in weights(agent.q_net).values())
+
+
 # ------------------------------------------------------------- save / load
 #: Every field away from its default, with values float32 cannot hold.
 AWKWARD_CFG = DQNConfig(
-    gamma=1.0 / 3.0, lr=1.2345678e-3, batch_size=48, buffer_size=5_000, learning_starts=96,
-    grad_steps_per_vec_step=3, target_update_every=4, grad_clip=0.7, eps_start=0.9, eps_end=0.01,
-    eps_decay_fraction=0.35, hidden=(12, 8), double=True, keep_checkpoints=False, device="cpu", torch_threads=1,
+    gamma=1.0 / 3.0, lr=1.2345678e-3, batch_size=48, buffer_size=5_000, replay=False, learning_starts=96,
+    grad_steps_per_vec_step=1, target_update_every=4, grad_clip=0.7, eps_start=0.9, eps_end=0.01,
+    eps_decay_fraction=0.35, hidden=(12, 8), conv_channels=(5,), double=True, keep_checkpoints=False, device="cpu",
+    torch_threads=1,
 )
 
 
@@ -1404,6 +1807,109 @@ def test_load_device_argument_and_untrained_round_trip(tmp_path):
     obs = random_obs(np.random.default_rng(0), 20)
     assert np.array_equal(loaded.q_values(obs), agent.q_values(obs))
     assert np.array_equal(loaded.act_batch(obs), agent.act_batch(obs))
+
+
+def test_saved_config_entry_spells_out_every_field_with_the_tuples_as_lists(tmp_path):
+    agent, _ = trained_agent()
+    payload = torch.load(agent.save(tmp_path / "model.pt"), map_location="cpu", weights_only=True)
+    config = payload["config"]
+    assert set(config) == {f.name for f in fields(DQNConfig)}
+    assert config["hidden"] == [12, 8] and type(config["hidden"]) is list
+    assert config["conv_channels"] == [5] and type(config["conv_channels"]) is list  # M6, also on observation A
+    assert config["replay"] is False and config["double"] is True and config["grad_steps_per_vec_step"] == 1
+    assert list(payload["obs_shape"]) == [OBS_DIM] and payload["n_actions"] == 4 and payload["grad_steps"] == 6
+
+
+#: A grid agent with every field away from its default: 7 planes (no age plane) on 8x8.
+GRID_SHAPE = (7, 8, 8)
+AWKWARD_GRID_CFG = replace(AWKWARD_CFG, hidden=(12,), conv_channels=(3, 5))
+
+
+def random_grid_batch(rng: np.random.Generator, n: int = 16, shape: tuple[int, int, int] = GRID_SHAPE) -> Batch:
+    """Synthetic transitions on grid observations."""
+    return Batch(
+        obs=random_grid(rng, n, shape),
+        actions=rng.integers(0, 4, size=n).astype(np.int64),
+        rewards=rng.choice((-1.0, 0.0, 0.0, 1.0), size=n).astype(np.float32),
+        next_obs=random_grid(rng, n, shape),
+        terminated=rng.random(n) < 0.2,
+    )
+
+
+def trained_grid_agent(n_updates: int = 6) -> tuple[DQNAgent, np.random.Generator]:
+    """Grid agent after ``n_updates`` updates (6: last sync at step 4, so target != online)."""
+    agent = DQNAgent(GRID_SHAPE, 4, AWKWARD_GRID_CFG, seed=11)
+    rng = np.random.default_rng(21)
+    for _ in range(n_updates):
+        agent.update(random_grid_batch(rng))
+    return agent, rng
+
+
+def test_grid_agent_save_load_round_trip_is_exact(tmp_path):
+    agent, rng = trained_grid_agent()
+    assert isinstance(agent.q_net, CNN)
+    online, target = weights(agent.q_net), weights(agent.target_net)
+    assert not same(online, target)
+    path = agent.save(tmp_path / "grid" / "model.pt")
+    assert path.is_file()
+    payload = torch.load(path, map_location="cpu", weights_only=True)  # plain tensors and primitives
+    assert payload["config"]["conv_channels"] == [3, 5] and type(payload["config"]["conv_channels"]) is list
+    assert payload["config"]["hidden"] == [12] and payload["config"]["replay"] is False
+    assert list(payload["obs_shape"]) == list(GRID_SHAPE) and payload["n_actions"] == 4
+    assert same(weights(agent.q_net), online) and agent.grad_steps == 6  # saving changes nothing
+
+    loaded = DQNAgent.load(path)
+    assert isinstance(loaded, DQNAgent) and isinstance(loaded.q_net, CNN) and loaded is not agent
+    assert same(weights(loaded.q_net), online) and same(weights(loaded.target_net), target)
+    assert loaded.grad_steps == 6 and type(loaded.grad_steps) is int
+    assert loaded.cfg == AWKWARD_GRID_CFG
+    assert type(loaded.cfg.conv_channels) is tuple and type(loaded.cfg.hidden) is tuple
+    assert tuple(loaded.obs_shape) == GRID_SHAPE and loaded.n_actions == 4
+    assert [tuple(layer.weight.shape) for layer in conv_layers(loaded.q_net)] == [(3, 7, 3, 3), (5, 3, 3, 3)]
+    assert loaded.q_net.n_flatten == 5 * 64
+
+    # The optimiser state came along: both agents continue identically, through the next sync (step 8).
+    for step in (7, 8, 9):
+        batch = random_grid_batch(rng)
+        assert loaded.update(batch) == agent.update(batch), f"step {step}"
+        assert same(weights(loaded.q_net), weights(agent.q_net)), f"step {step}"
+        assert same(weights(loaded.target_net), weights(agent.target_net)), f"step {step}"
+    assert loaded.grad_steps == agent.grad_steps == 9
+
+    # Weights only, as the checkpoints are written.
+    light = agent.save(tmp_path / "light.pt", include_optimizer=False)
+    assert "optimizer" not in torch.load(light, map_location="cpu", weights_only=True)
+    again = DQNAgent.load(light)
+    assert again.cfg == AWKWARD_GRID_CFG and same(weights(again.q_net), weights(agent.q_net))
+    obs = random_grid(np.random.default_rng(0), 20, GRID_SHAPE)
+    assert np.array_equal(again.q_values(obs), agent.q_values(obs))
+    assert np.array_equal(again.act_batch(obs), agent.act_batch(obs))
+
+
+def test_a_checkpoint_written_before_m6_loads_with_the_defaults_of_the_new_fields(tmp_path):
+    """A pre-M6 file has no ``replay`` and no ``conv_channels`` in its config
+    entry (built here by hand from a saved file): it loads with the defaults
+    of those fields, everything else exact."""
+    agent = DQNAgent((OBS_DIM,), 4, cpu_cfg(hidden=(8,), replay=False, conv_channels=(5,), lr=3e-3), seed=2)
+    rng = np.random.default_rng(4)
+    for _ in range(3):
+        agent.update(random_batch(rng))
+    payload = torch.load(agent.save(tmp_path / "m6.pt"), map_location="cpu", weights_only=True)
+    assert payload["config"]["replay"] is False and payload["config"]["conv_channels"] == [5]
+    old = dict(payload)
+    old["config"] = {key: value for key, value in payload["config"].items() if key not in ("replay", "conv_channels")}
+    assert set(old["config"]) == {f.name for f in fields(DQNConfig)} - {"replay", "conv_channels"}
+    with open(tmp_path / "pre_m6.pt", "wb") as f:
+        torch.save(old, f)
+
+    loaded = DQNAgent.load(tmp_path / "pre_m6.pt")
+    assert loaded.cfg == replace(agent.cfg, replay=True, conv_channels=(32, 64, 64))
+    assert loaded.cfg.replay is True and loaded.cfg.conv_channels == (32, 64, 64)
+    assert type(loaded.cfg.conv_channels) is tuple and loaded.cfg.lr == 3e-3 and loaded.cfg.hidden == (8,)
+    assert same(weights(loaded.q_net), weights(agent.q_net)) and same(weights(loaded.target_net), weights(agent.target_net))
+    assert loaded.grad_steps == 3 and tuple(loaded.obs_shape) == (OBS_DIM,) and loaded.n_actions == 4
+    batch = random_batch(rng)
+    assert loaded.update(batch) == agent.update(batch)  # the optimiser state too
 
 
 # ------------------------------------------------------------- CUDA

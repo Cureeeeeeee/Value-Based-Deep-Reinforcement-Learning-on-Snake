@@ -921,6 +921,52 @@ def test_cli_learned_player_from_run_dir(tmp_path: Path, dqn: DQNAgent):
     assert png_size(shot) == window_size(8, CELL)  # the board size comes from the run's config
 
 
+def test_observation_b_agent_plays_in_headless_agent_mode(tmp_path: Path, make_app):
+    """M6: a run directory of an observation-B agent (the CNN on the 8-plane
+    8x8 grid, config of the shipped smoke B file) loads, passes the shape check
+    of ``_build_app``, plays, and the action-value panel works without the
+    observation-A feature bar."""
+    run = write_run(tmp_path / "smoke_dqn_B8_W8" / "0", CONFIGS / "smoke_B_8x8.yaml")
+    env_cfg = load_config(run / "config.yaml").env
+    assert env_cfg.obs.kind == "B" and env_cfg.obs.shape(env_cfg.W) == (8, 8, 8)
+    agent = DQNAgent((8, 8, 8), 3, DQNConfig(conv_channels=(2, 2), hidden=(8,), device="cpu"), seed=0)
+    agent.save(run / "model.pt")
+    ckpt = agent.save(run / "checkpoints" / "step_00000800.pt", include_optimizer=False)
+
+    for spec in (run, ckpt):
+        loaded = load_player(spec)
+        assert loaded.kind == "dqn" and isinstance(loaded.player, DQNAgent)
+        assert tuple(loaded.player.obs_shape) == (8, 8, 8) and loaded.env_cfg == env_cfg
+    loaded = load_player(run)
+    session = GameSession(loaded.env_cfg, player=loaded.player, seed=DEFAULT_SEED)
+    assert session.obs.shape == (8, 8, 8)
+    assert session.q is not None and session.q.shape == (3,)
+    np.testing.assert_array_equal(session.q, action_values(loaded.player, session.obs))
+    np.testing.assert_array_equal(session.q, agent.q_values(session.obs[None])[0])
+    assert session.chosen == int(np.argmax(session.q)) == agent.act(session.obs, session.env)
+    for _ in range(5):
+        if session.done:
+            break
+        session.agent_step()
+    assert session.steps >= 1 and len(session.recording.q_values) == session.steps
+    app = make_app(session)
+    frame = app.render()
+    assert frame.get_size() == window_size(W, CELL)
+    lines = "\n".join(app.panel_lines())
+    for label in ACTION_LABELS["relative"]:
+        assert label in lines
+    assert "Score" in lines
+
+    shot = tmp_path / "b.png"
+    assert exit_code(["--player", str(run), "--cell", str(CELL), "--headless", "--steps", "5",
+                      "--screenshot", str(shot)]) == 0
+    assert png_size(shot) == window_size(8, CELL)
+    assert exit_code(["--player", str(ckpt), "--cell", str(CELL), "--headless", "--steps", "3",
+                      "--screenshot", str(tmp_path / "b_ckpt.png")]) == 0
+    # The shape check still bites: a 10x10 board gives (8, 10, 10) observations, not (8, 8, 8).
+    assert exit_code(["--player", str(run), "--W", "10", "--headless", "--steps", "1"]) == 2
+
+
 def test_cli_exit_code_2(tmp_path: Path, bfs_recording, capsys):
     _, rec_path = bfs_recording
     assert exit_code(["--mode", "agent", "--headless", "--steps", "1"]) == 2

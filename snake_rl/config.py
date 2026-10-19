@@ -35,14 +35,16 @@ which documents every field); its ``agent`` block, with the defaults::
       lr: 2.5e-4                     # Adam
       batch_size: 256
       buffer_size: 100000            # transitions in the replay buffer
+      replay: true                   # false: one gradient step per vec-step on its own transitions (M6)
       learning_starts: 10000         # env steps collected before the first gradient step
-      grad_steps_per_vec_step: null  # null -> max(1, n_envs // 4)
-      target_update_every: 1000      # gradient steps between two hard target syncs
+      grad_steps_per_vec_step: null  # null -> max(1, n_envs // 4); must be null or 1 without replay
+      target_update_every: 1000      # gradient steps between two hard target syncs (1 = no target network)
       grad_clip: 10.0                # max global gradient norm
       eps_start: 1.0
       eps_end: 0.05
       eps_decay_fraction: 0.2
-      hidden: [256, 256]             # [] = linear Q-function
+      hidden: [256, 256]             # fully connected widths; [] = linear Q-function (observation A)
+      conv_channels: [32, 64, 64]    # 3x3 convolutions for observation B; [] = none (M6)
       double: false                  # Double DQN target (M7)
       keep_checkpoints: true         # weights-only checkpoint at every evaluation
       device: auto                   # auto | cpu | cuda
@@ -75,10 +77,14 @@ misspelt reward variant fails only at the first ``step``). Every error is a
 * ``dqn``: ``lr > 0``; ``batch_size >= 1``; ``buffer_size >= batch_size``;
   ``batch_size <= learning_starts <= train.total_env_steps``;
   ``grad_steps_per_vec_step`` and ``torch_threads`` null or ``>= 1``;
-  ``target_update_every >= 1``; ``grad_clip > 0``; ``hidden`` a list of
-  positive integers (possibly empty); ``device`` one of auto / cpu / cuda;
-  gamma and the epsilon schedule as for ``tabular_q``; observation A only in
-  M5 (the CNN for observation B arrives in M6);
+  ``target_update_every >= 1``; ``grad_clip > 0``; ``hidden`` and
+  ``conv_channels`` lists of positive integers (possibly empty); ``replay``
+  a boolean; ``device`` one of auto / cpu / cuda; gamma and the epsilon
+  schedule as for ``tabular_q``; observation A (MLP) or B (CNN);
+* ``dqn`` with ``replay: true``: ``buffer_size >= train.n_envs`` (a smaller
+  buffer would drop part of every vec-step); with ``replay: false``:
+  ``grad_steps_per_vec_step`` null or 1 (there is exactly one gradient step
+  per vec-step, on that step's own transitions);
 * reward R2 needs ``env.reward.gamma == agent.gamma``: potential-based shaping
   (Ng et al. 1999) preserves the optimal policy only for the discount the
   agent actually uses;
@@ -321,8 +327,10 @@ class _Section:
         value = self.raw.get(name, default)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             hint = ""
-            if isinstance(value, str) and re.fullmatch(r"[+-]?\d+[eE][+-]?\d+", value.strip()):
-                hint = " (YAML needs a dot in the mantissa: write 1.0e-3, not 1e-3)"
+            # PyYAML reads YAML 1.1: a float needs a dot in the mantissa AND a
+            # sign in the exponent; 1e-3 and 1.0e9 are both strings to it.
+            if isinstance(value, str) and re.fullmatch(r"[+-]?\d+(\.\d*)?[eE][+-]?\d+", value.strip()):
+                hint = " (YAML needs a dot in the mantissa and a sign in the exponent: write 1.0e-3 or 1.0e+9)"
             raise ValueError(f"{self.key(name)} must be a finite number, got {value!r}{hint}")
         return float(value)
 
@@ -436,11 +444,18 @@ def _dqn_config(s: _Section) -> DQNConfig:
         isinstance(hidden, (list, tuple)) and all(_is_int(width) and width >= 1 for width in hidden),
         f"{s.key('hidden')} must be a list of positive integers (possibly empty: a linear Q-function), got {hidden!r}",
     )
+    conv_channels = s.raw.get("conv_channels", list(default.conv_channels))
+    _require(
+        isinstance(conv_channels, (list, tuple)) and all(_is_int(c) and c >= 1 for c in conv_channels),
+        f"{s.key('conv_channels')} must be a list of positive integers (possibly empty: no convolution), "
+        f"got {conv_channels!r}",
+    )
     cfg = DQNConfig(
         gamma=s.number("gamma", default.gamma),
         lr=s.number("lr", default.lr),
         batch_size=s.integer("batch_size", default.batch_size),
         buffer_size=s.integer("buffer_size", default.buffer_size),
+        replay=s.boolean("replay", default.replay),
         learning_starts=s.integer("learning_starts", default.learning_starts),
         grad_steps_per_vec_step=s.optional_integer("grad_steps_per_vec_step", default.grad_steps_per_vec_step),
         target_update_every=s.integer("target_update_every", default.target_update_every),
@@ -449,6 +464,7 @@ def _dqn_config(s: _Section) -> DQNConfig:
         eps_end=s.number("eps_end", default.eps_end),
         eps_decay_fraction=s.number("eps_decay_fraction", default.eps_decay_fraction),
         hidden=tuple(hidden),
+        conv_channels=tuple(conv_channels),
         double=s.boolean("double", default.double),
         keep_checkpoints=s.boolean("keep_checkpoints", default.keep_checkpoints),
         device=s.choice("device", default.device, DEVICES),
@@ -469,6 +485,12 @@ def _dqn_config(s: _Section) -> DQNConfig:
     _require(
         cfg.grad_steps_per_vec_step is None or cfg.grad_steps_per_vec_step >= 1,
         f"{s.key('grad_steps_per_vec_step')} must be null or at least 1, got {cfg.grad_steps_per_vec_step}",
+    )
+    _require(
+        cfg.replay or cfg.grad_steps_per_vec_step in (None, 1),
+        f"{s.key('grad_steps_per_vec_step')} must be null or 1 when {s.key('replay')} is false: without replay "
+        f"there is exactly one gradient step per vec-step, on that step's own transitions; "
+        f"got {cfg.grad_steps_per_vec_step}",
     )
     _require(
         cfg.target_update_every >= 1,
@@ -509,14 +531,14 @@ def _check_combination(cfg: ExperimentConfig) -> None:
         )
     if cfg.agent_kind == "dqn":
         _require(
-            env.obs.kind == "A",
-            f"env.obs.kind must be A for agent.kind dqn in M5 (the CNN for observation B arrives in M6), "
-            f"got {env.obs.kind!r}",
-        )
-        _require(
             agent.learning_starts <= cfg.train.total_env_steps,
             f"agent.learning_starts ({agent.learning_starts}) must not exceed train.total_env_steps "
             f"({cfg.train.total_env_steps}): the run would end before the first gradient step",
+        )
+        _require(
+            not agent.replay or agent.buffer_size >= cfg.train.n_envs,
+            f"agent.buffer_size ({agent.buffer_size}) must be at least train.n_envs ({cfg.train.n_envs}) with "
+            f"replay: a smaller buffer would drop part of every vec-step's transitions",
         )
     if env.reward.variant == "R2":
         _require(

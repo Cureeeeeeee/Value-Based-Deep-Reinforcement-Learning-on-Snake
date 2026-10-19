@@ -11,9 +11,15 @@ A run directory ``<runs_dir>/<exp>/<seed>/`` is written by ``snake_rl.train``:
 * ``final_eval.json``  ``EvalResult.to_dict()`` of the last evaluation.
 
 A run is *finished* when ``config.yaml`` and ``final_eval.json`` both exist.
-Unfinished runs never enter a table or a curve; they are reported by an
-:class:`AggregateWarning`. Extra columns in ``metrics.csv`` and extra keys in
-``config.yaml`` are ignored (DQN runs log more than tabular runs).
+A run with ``aborted.json`` (a DQN update produced a non-finite loss) is
+*aborted*; one with only ``config.yaml`` or only ``final_eval.json`` is
+*unfinished* (still running, or interrupted). Neither enters a table or a
+curve; each kind is reported by its own :class:`AggregateWarning`, and the
+count of aborted runs is carried into the summary (``n_aborted``) and the
+table (the ``seeds`` cell), so a configuration whose seeds diverged is not
+represented by its survivors alone. Extra columns in ``metrics.csv`` and
+extra keys in ``config.yaml`` are ignored (DQN runs log more than tabular
+runs).
 
 One table carries two different confidence intervals; the column "CI over"
 says which one a row has:
@@ -80,6 +86,7 @@ from snake_rl.evaluate import EvalResult
 
 CONFIG_FILE = "config.yaml"
 FINAL_FILE = "final_eval.json"
+ABORTED_FILE = "aborted.json"
 METRICS_FILE = "metrics.csv"
 
 #: End causes reported in tables, in column order.
@@ -161,32 +168,55 @@ def _load_run(run_dir: Path) -> RunResult:
     return RunResult(run_dir=run_dir, seed=seed, config=config, final=final, metrics=metrics)
 
 
-def load_runs(exp_dir: str | Path) -> list[RunResult]:
-    """Finished runs of one experiment directory, sorted by seed.
+@dataclass(frozen=True)
+class ExperimentScan:
+    """What one experiment directory holds: finished runs (sorted by seed),
+    and the names of the aborted and the unfinished run directories."""
 
-    A sub-directory with only one of ``config.yaml`` / ``final_eval.json`` is
-    an unfinished run: skipped, and named in an :class:`AggregateWarning`.
-    Sub-directories with neither file are not runs and are ignored. Raises
-    ``ValueError`` if there is no finished run or if two runs claim the same
-    seed (a copied directory must not count as a new replicate).
+    runs: list[RunResult]
+    aborted: list[str]
+    unfinished: list[str]
+
+
+def scan_experiment(exp_dir: str | Path, stacklevel: int = 2) -> ExperimentScan:
+    """Classify the sub-directories of one experiment directory and load the
+    finished runs.
+
+    Finished: ``config.yaml`` and ``final_eval.json``. Aborted: ``aborted.json``
+    (whatever else is there, except ``final_eval.json``). Unfinished: only one
+    of ``config.yaml`` / ``final_eval.json``. Sub-directories with none of
+    these files are not runs and are ignored. Aborted and unfinished runs are
+    named in one :class:`AggregateWarning` each (issued with ``stacklevel``),
+    then ``ValueError`` if there is no finished run or if two finished runs
+    claim the same seed (a copied directory must not count as a new
+    replicate), or if the finished runs are not one configuration.
     """
     exp_dir = Path(exp_dir)
     if not exp_dir.is_dir():
         raise ValueError(f"{exp_dir} is not a directory")
     runs: list[RunResult] = []
+    aborted: list[str] = []
     unfinished: list[str] = []
     for sub in sorted(p for p in exp_dir.iterdir() if p.is_dir()):
         has_config = (sub / CONFIG_FILE).is_file()
         has_final = (sub / FINAL_FILE).is_file()
         if has_config and has_final:
             runs.append(_load_run(sub))
+        elif (sub / ABORTED_FILE).is_file():
+            aborted.append(sub.name)
         elif has_config or has_final:
             unfinished.append(sub.name)
+    if aborted:
+        warnings.warn(
+            f"{exp_dir}: skipped {len(aborted)} aborted run(s) ({ABORTED_FILE}): {', '.join(aborted)}",
+            AggregateWarning,
+            stacklevel=stacklevel,
+        )
     if unfinished:
         warnings.warn(
             f"{exp_dir}: skipped {len(unfinished)} unfinished run(s): {', '.join(unfinished)}",
             AggregateWarning,
-            stacklevel=2,
+            stacklevel=stacklevel,
         )
     if not runs:
         raise ValueError(f"no finished run in {exp_dir}")
@@ -196,7 +226,19 @@ def load_runs(exp_dir: str | Path) -> list[RunResult]:
         dirs = ", ".join(f"{r.run_dir.name} (seed {r.seed})" for r in runs)
         raise ValueError(f"{exp_dir}: duplicate seeds among run directories: {dirs}")
     _require_one_configuration(exp_dir, runs)
-    return runs
+    return ExperimentScan(runs=runs, aborted=aborted, unfinished=unfinished)
+
+
+def load_runs(exp_dir: str | Path) -> list[RunResult]:
+    """Finished runs of one experiment directory, sorted by seed.
+
+    Aborted runs (``aborted.json``) and unfinished runs (only one of
+    ``config.yaml`` / ``final_eval.json``) are skipped and named in one
+    :class:`AggregateWarning` each (:func:`scan_experiment` has the rules).
+    Raises ``ValueError`` if there is no finished run or if two runs claim
+    the same seed.
+    """
+    return scan_experiment(exp_dir, stacklevel=3).runs
 
 
 #: Top-level keys of ``config.yaml`` that may differ between the runs of one
@@ -264,7 +306,9 @@ def _last_k_summary(runs: Sequence[RunResult], last_k: int) -> dict[str, Any]:
     return {"last_k": int(last_k), "lastk_mean_score": mean, "lastk_ci95": ci, "lastk_per_seed": per_seed}
 
 
-def _summarise_runs(runs: Sequence[RunResult], label: str, last_k: int | None = None) -> dict[str, Any]:
+def _summarise_runs(
+    runs: Sequence[RunResult], label: str, last_k: int | None = None, aborted: Sequence[str] = ()
+) -> dict[str, Any]:
     finals = [r.final for r in runs]
     per_seed_means = [f.mean_score for f in finals]
     mean, ci = mean_ci95(per_seed_means)  # the seed is the unit of replication
@@ -288,6 +332,8 @@ def _summarise_runs(runs: Sequence[RunResult], label: str, last_k: int | None = 
         "max_score": pooled["max_score"],
         "mean_steps": pooled["mean_steps"],
         "cause_fractions": pooled["cause_fractions"],
+        "n_aborted": len(aborted),
+        "aborted": list(aborted),
     }
     if last_k is not None:
         summary.update(_last_k_summary(runs, last_k))
@@ -303,7 +349,9 @@ def summarise_experiment(
     ``ci95`` the Student-t half-width over those per-seed means (nan for one
     seed). ``n_episodes`` is the episode count per seed, or ``None`` if the
     seeds disagree (``per_seed_n_episodes`` always lists them). Median, max,
-    mean steps and cause fractions are over all pooled episodes.
+    mean steps and cause fractions are over all pooled episodes. ``n_aborted``
+    and ``aborted`` count and name the run directories of the experiment
+    that hold ``aborted.json`` (a diverged DQN run; not in any statistic).
 
     With ``last_k`` the dict gains four keys: ``last_k``; ``lastk_per_seed``,
     each seed's mean of ``eval_mean_score`` over the last ``last_k`` rows of
@@ -315,7 +363,8 @@ def summarise_experiment(
     if last_k is not None:
         _check_last_k(last_k)  # before any file is read
     exp_dir = Path(exp_dir)
-    return _summarise_runs(load_runs(exp_dir), label if label is not None else exp_dir.resolve().name, last_k)
+    scan = scan_experiment(exp_dir, stacklevel=3)
+    return _summarise_runs(scan.runs, label if label is not None else exp_dir.resolve().name, last_k, scan.aborted)
 
 
 def summarise_baseline(json_path: str | Path, label: str | None = None) -> dict[str, Any]:
@@ -345,6 +394,8 @@ def summarise_baseline(json_path: str | Path, label: str | None = None) -> dict[
         "max_score": s["max_score"],
         "mean_steps": s["mean_steps"],
         "cause_fractions": s["cause_fractions"],
+        "n_aborted": 0,
+        "aborted": [],
     }
 
 
@@ -353,6 +404,8 @@ def results_table(rows: Sequence[dict[str, Any]]) -> str:
 
     A CI that does not exist (one seed) is printed as ``n/a``, never as a
     number. Seeds with different episode counts are printed as ``min-max``.
+    A row with aborted runs (``n_aborted > 0``) prints its seeds cell as
+    ``<n_seeds> (+<n_aborted> aborted)``; without any, the table is unchanged.
 
     If at least one row carries ``last_k`` (``summarise_experiment(...,
     last_k=k)``), a last column ``last-<k> evals mean +- 95% CI`` is appended;
@@ -380,8 +433,10 @@ def results_table(rows: Sequence[dict[str, Any]]) -> str:
             episodes = f"{min(r['per_seed_n_episodes'])}-{max(r['per_seed_n_episodes'])}"
         frac = " | ".join(f"{r['cause_fractions'][c]:.2f}" for c in CAUSES)
         label = str(r["label"]).replace("|", "\\|")
+        n_aborted = int(r.get("n_aborted") or 0)
+        seeds_text = f"{r['n_seeds']} (+{n_aborted} aborted)" if n_aborted else str(r["n_seeds"])
         line = (
-            f"| {label} | {r['n_seeds']} | {episodes} | {r['mean_score']:.2f} +- {ci_text} | {r['ci_kind']} | "
+            f"| {label} | {seeds_text} | {episodes} | {r['mean_score']:.2f} +- {ci_text} | {r['ci_kind']} | "
             f"{r['median_score']:.1f} | {r['max_score']} | {r['mean_steps']:.1f} | {frac} |"
         )
         if last_ks:
@@ -464,12 +519,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     curves: dict[str, pd.DataFrame] = {}
     for d in args.exp:
         name = Path(d).resolve().name
-        runs = load_runs(d)
-        rows.append(_summarise_runs(runs, name, args.last_k))
+        scan = scan_experiment(d)
+        rows.append(_summarise_runs(scan.runs, name, args.last_k, scan.aborted))
         if args.curves_dir:
             if name in curves:
                 p.error(f"two experiments are named {name!r}: their curve files would overwrite each other")
-            curves[name] = _curve_from_runs(runs)
+            curves[name] = _curve_from_runs(scan.runs)
 
     table = results_table(rows)
     print(table)

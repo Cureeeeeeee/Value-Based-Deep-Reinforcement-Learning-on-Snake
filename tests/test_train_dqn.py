@@ -1,11 +1,13 @@
-"""The DQN training path (PLAN.md milestone M5): the ``dqn`` agent kind of
-``snake_rl.config``, the trainer ``_train_dqn`` of ``snake_rl.train`` and the
-three shipped DQN configuration files.
+"""The DQN training path (PLAN.md milestones M5 and M6): the ``dqn`` agent
+kind of ``snake_rl.config`` (M6: observation B accepted, ``replay`` and
+``conv_channels``), the trainer ``_train_dqn`` of ``snake_rl.train`` (M6: the
+no-replay loop, ``aborted.json``) and the six shipped DQN configuration files.
 
 Every run of this file goes to a pytest temporary directory, on the CPU with
 one torch thread and tiny networks and budgets. The subprocess jobs (a fresh
-training process and ``scripts/run_matrix.py`` on the smoke config) are started
-when the module starts, so they run while the in-process tests do.
+training process, ``scripts/run_matrix.py`` on the smoke config and the
+shipped observation-B smoke config) are started when the module starts, so
+they run while the in-process tests do.
 """
 
 from __future__ import annotations
@@ -29,6 +31,9 @@ import snake_rl.train as train_module
 from snake_rl.agents.baselines import make_policy
 from snake_rl.agents.dqn import DQNConfig, ReplayBuffer
 from snake_rl.agents.dqn.agent import DQNAgent
+from snake_rl.agents.dqn.networks import CNN
+from snake_rl.agents.dqn.replay import Batch
+from snake_rl.agents.schedules import linear_schedule
 from snake_rl.agents.tabular_q import TabularQConfig
 from snake_rl.config import ExperimentConfig, TrainConfig, config_from_dict, config_to_dict, load_config
 from snake_rl.env import EnvConfig, ObsConfig, RewardConfig, VecSnakeEnv
@@ -39,7 +44,10 @@ from snake_rl.utils import git_hash
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = REPO_ROOT / "configs"
 SMOKE = CONFIGS / "smoke_8x8.yaml"
+SMOKE_B = CONFIGS / "smoke_B_8x8.yaml"
 SMOKE_TABULAR = CONFIGS / "smoke_tabular.yaml"
+ABORTED_FILE = "aborted.json"
+BATCH_FIELDS = ("obs", "actions", "rewards", "next_obs", "terminated")
 
 HEADER = (
     "env_steps,vec_steps,grad_steps,epsilon,eval_mean_score,eval_ci95,eval_median_score,eval_max_score,"
@@ -73,6 +81,17 @@ VARIANT = ("exp=variant_dqn", "env.W=6", "env.starve_limit=8", "train.n_envs=6",
            "agent.grad_steps_per_vec_step=3", "agent.target_update_every=7", "agent.double=true",
            "agent.gamma=0.8", "agent.lr=1.0e-3", "agent.eps_end=0.1", "agent.eps_decay_fraction=0.5")
 VARIANT_SEED = 2
+#: M6: the VARIANT run without a replay buffer (one gradient step per vec-step
+#: on that vec-step's own six transitions, from vec-step 50 on).
+NOREPLAY = (*VARIANT, "exp=noreplay_dqn", "agent.replay=false", "agent.grad_steps_per_vec_step=1")
+NOREPLAY_SEED = 4
+#: M6: the observation-B smoke config shrunk like TINY: a CNN of two 4-channel
+#: layers and a 16-unit hidden layer on the 8-plane 8x8 grid, 300 vec-steps of
+#: 8 boards, learning from 1000 env steps on.
+TINY_B = ("exp=tiny_dqn_B", "env.starve_limit=20", "train.n_envs=8", "train.total_env_steps=2400",
+          "train.eval_every=800", "train.eval_episodes=6", "agent.conv_channels=[4, 4]", "agent.hidden=[16]",
+          "agent.batch_size=16", "agent.buffer_size=1000", "agent.learning_starts=1000",
+          "agent.target_update_every=50")
 
 
 # ----------------------------------------------------------------- fixtures
@@ -89,6 +108,9 @@ def background(tmp_path_factory):
         # The batch runner on the shipped smoke config, unchanged: two seeds, two processes.
         "matrix": [str(REPO_ROOT / "scripts" / "run_matrix.py"), "--config", str(SMOKE), "--seeds", "0", "1",
                    "--runs-dir", str(root / "matrix"), "--jobs", "2"],
+        # M6: the shipped observation-B smoke config, as shipped, in a fresh process.
+        "smoke_b": ["-m", "snake_rl.train", "--config", str(SMOKE_B), "--seed", "0", "--runs-dir",
+                    str(root / "smoke_b"), "--quiet"],
     }
     processes = {
         name: subprocess.Popen([sys.executable, *args], cwd=REPO_ROOT, stdout=subprocess.PIPE,
@@ -181,6 +203,63 @@ def variant_run(tmp_path_factory):
                            steps=steps, adds=adds)
 
 
+@pytest.fixture(scope="module")
+def noreplay_run(tmp_path_factory):
+    """M6: the NOREPLAY run, with a spy on the training environment, on every
+    ``DQNAgent.update`` call (the batch it received and ``grad_steps`` before
+    it) and on ``ReplayBuffer`` construction (none changes what the run does)."""
+    runs = tmp_path_factory.mktemp("noreplay_runs")
+    cfg = load_config(SMOKE, NOREPLAY)
+    envs, observed, steps, updates, buffers = [], [], [], [], []
+
+    class SpyEnv(VecSnakeEnv):
+        def __init__(self, env_cfg, n_envs, seed):
+            super().__init__(env_cfg, n_envs, seed=seed)
+            envs.append((env_cfg, n_envs, seed))
+
+        def reset(self, seed=None):
+            obs = super().reset(seed)
+            observed.append(obs.copy())
+            return obs
+
+        def step(self, actions):
+            obs, reward, terminated, truncated, info = super().step(actions)
+            steps.append(SimpleNamespace(actions=np.array(actions), reward=reward.copy(), terminated=terminated.copy(),
+                                         truncated=truncated.copy(), final_obs=info["final_obs"].copy()))
+            observed.append(obs.copy())
+            return obs, reward, terminated, truncated, info
+
+    real_update = DQNAgent.update
+
+    def spy_update(self, batch):
+        assert isinstance(batch, Batch)
+        updates.append(SimpleNamespace(grad_steps=self.grad_steps,
+                                       batch=Batch(*(np.array(getattr(batch, name)) for name in BATCH_FIELDS))))
+        return real_update(self, batch)
+
+    real_init = ReplayBuffer.__init__
+
+    def spy_init(self, *args, **kwargs):
+        buffers.append((args, kwargs))
+        return real_init(self, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(train_module, "VecSnakeEnv", SpyEnv)
+        patch.setattr(DQNAgent, "update", spy_update)
+        patch.setattr(ReplayBuffer, "__init__", spy_init)
+        run_dir = train(cfg, NOREPLAY_SEED, runs, quiet=True)
+    return SimpleNamespace(cfg=cfg, seed=NOREPLAY_SEED, runs=runs, dir=run_dir, envs=envs, observed=observed,
+                           steps=steps, updates=updates, buffers=buffers)
+
+
+@pytest.fixture(scope="module")
+def tiny_b_run(tmp_path_factory):
+    """M6: the TINY_B run (the CNN on the 8-plane 8x8 grid, with replay)."""
+    runs = tmp_path_factory.mktemp("tiny_b_runs")
+    cfg = load_config(SMOKE_B, TINY_B)
+    return SimpleNamespace(cfg=cfg, seed=TINY_SEED, runs=runs, dir=train(cfg, TINY_SEED, runs, quiet=True))
+
+
 # ------------------------------------------------------------------ helpers
 def dqn_dict() -> dict:
     """A complete, valid DQN configuration written out by hand (YAML layout)."""
@@ -194,11 +273,11 @@ def dqn_dict() -> dict:
             "reward": {"variant": "R0", "food": 1.0, "death": -1.0, "step_penalty": 0.01, "gamma": 0.99,
                        "closer": 0.01, "farther": 0.0},
         },
-        "agent": {"kind": "dqn", "gamma": 0.9, "lr": 2.5e-4, "batch_size": 16, "buffer_size": 1000,
+        "agent": {"kind": "dqn", "gamma": 0.9, "lr": 2.5e-4, "batch_size": 16, "buffer_size": 1000, "replay": True,
                   "learning_starts": 400, "grad_steps_per_vec_step": None, "target_update_every": 50,
                   "grad_clip": 10.0, "eps_start": 1.0, "eps_end": 0.05, "eps_decay_fraction": 0.2,
-                  "hidden": [16, 16], "double": False, "keep_checkpoints": True, "device": "cpu",
-                  "torch_threads": 1},
+                  "hidden": [16, 16], "conv_channels": [32, 64, 64], "double": False, "keep_checkpoints": True,
+                  "device": "cpu", "torch_threads": 1},
         "train": {"n_envs": 8, "total_env_steps": 2400, "eval_every": 800, "eval_episodes": 6, "eval_seed": 10000},
     }
 
@@ -312,18 +391,23 @@ def tree(directory: Path) -> dict:
 
 
 def expected_grad_steps(cfg: ExperimentConfig, vec_steps: int) -> int:
-    """G gradient steps after every vec-step that ends at or after ``learning_starts``."""
+    """G gradient steps after every vec-step that ends at or after ``learning_starts``
+    (with replay); exactly one per such vec-step without replay (M6, D4)."""
     ac, n = cfg.agent, cfg.train.n_envs
-    per_vec_step = ac.grad_steps_per_vec_step or max(1, n // 4)
+    per_vec_step = (ac.grad_steps_per_vec_step or max(1, n // 4)) if ac.replay else 1
     return per_vec_step * sum(1 for v in range(1, vec_steps + 1) if v * n >= ac.learning_starts)
 
 
 # =================================================================== config
-def expected_config(exp: str, W: int, agent: DQNConfig, train_cfg: TrainConfig) -> ExperimentConfig:
+OBS_B8 = ObsConfig(kind="B", age_plane=True, heading_planes=True)
+
+
+def expected_config(
+    exp: str, W: int, agent: DQNConfig, train_cfg: TrainConfig, obs: ObsConfig = ObsConfig(kind="A")
+) -> ExperimentConfig:
     return ExperimentConfig(
         exp=exp,
-        env=EnvConfig(W=W, action_mode="relative", starve_limit=None, obs=ObsConfig(kind="A"),
-                      reward=RewardConfig(variant="R0")),
+        env=EnvConfig(W=W, action_mode="relative", starve_limit=None, obs=obs, reward=RewardConfig(variant="R0")),
         agent_kind="dqn",
         agent=agent,
         train=train_cfg,
@@ -344,29 +428,73 @@ SHIPPED = {
                   hidden=(64, 64), device="cpu", torch_threads=1),
         TrainConfig(16, 16_000, 4_000, 20, 10_000),
     ),
+    # M6 (D6): the CNN files on the 8-plane observation B. The two experiment files have the board, reward,
+    # evaluation protocol and budget of their A counterparts; the smoke file a small CNN (16 and 32
+    # channels, one hidden layer of 128) at three times the budget of smoke_8x8.yaml (the M6 measurement:
+    # an 8/8-channel, 32-unit CNN does not leave the random level within 96,000 steps; this one scores
+    # 9.7 / 13.7 on seeds 0 / 1 at 48,000 steps, about 45 s on one CPU thread).
+    "smoke_B_8x8.yaml": expected_config(
+        "smoke_dqn_B8_W8", 8,
+        DQNConfig(gamma=0.9, batch_size=64, buffer_size=10_000, learning_starts=1024, target_update_every=250,
+                  hidden=(128,), conv_channels=(16, 32), device="cpu", torch_threads=1),
+        TrainConfig(16, 48_000, 12_000, 20, 10_000), obs=OBS_B8,
+    ),
+    "dqn_B_8x8.yaml": expected_config(
+        "dqn_B8_W8", 8, DQNConfig(gamma=0.9, hidden=(512,), conv_channels=(32, 64, 64), device="cpu"),
+        TrainConfig(128, 512_000, 12_800, 100, 10_000), obs=OBS_B8,
+    ),
+    "dqn_B_10x10.yaml": expected_config(
+        "dqn_B8_W10", 10, DQNConfig(gamma=0.9, hidden=(512,), conv_channels=(32, 64, 64), device="cpu"),
+        TrainConfig(128, 1_024_000, 12_800, 100, 10_000), obs=OBS_B8,
+    ),
 }
+#: Agent fields of a shipped file that D6 leaves open (decided by the D7 benchmark): compared loosely.
+FREE_FIELDS = {"dqn_B_8x8.yaml": ("device", "torch_threads"), "dqn_B_10x10.yaml": ("device", "torch_threads")}
 
 
 def test_dqn_config_defaults():
     assert DQNConfig() == DQNConfig(
-        gamma=0.99, lr=2.5e-4, batch_size=256, buffer_size=100_000, learning_starts=10_000,
+        gamma=0.99, lr=2.5e-4, batch_size=256, buffer_size=100_000, replay=True, learning_starts=10_000,
         grad_steps_per_vec_step=None, target_update_every=1_000, grad_clip=10.0, eps_start=1.0, eps_end=0.05,
-        eps_decay_fraction=0.2, hidden=(256, 256), double=False, keep_checkpoints=True, device="auto",
-        torch_threads=None,
+        eps_decay_fraction=0.2, hidden=(256, 256), conv_channels=(32, 64, 64), double=False, keep_checkpoints=True,
+        device="auto", torch_threads=None,
     )
-    # The defaults pass the validation (with a budget that reaches learning_starts).
+    assert [f.name for f in dataclasses.fields(DQNConfig)] == [
+        "gamma", "lr", "batch_size", "buffer_size", "replay", "learning_starts", "grad_steps_per_vec_step",
+        "target_update_every", "grad_clip", "eps_start", "eps_end", "eps_decay_fraction", "hidden", "conv_channels",
+        "double", "keep_checkpoints", "device", "torch_threads",
+    ]
+    # The defaults pass the validation (with a budget that reaches learning_starts), on either observation.
     cfg = ExperimentConfig("d", EnvConfig(), "dqn", DQNConfig(), TrainConfig())
     assert config_from_dict(config_to_dict(cfg)) == cfg
+    grid = ExperimentConfig("d", EnvConfig(obs=OBS_B8), "dqn", DQNConfig(), TrainConfig())
+    assert config_from_dict(config_to_dict(grid)) == grid
 
 
 @pytest.mark.parametrize("name", sorted(SHIPPED))
 def test_shipped_dqn_config_files_load(name):
     cfg = load_config(CONFIGS / name)
-    assert cfg == SHIPPED[name]
-    assert type(cfg.agent) is DQNConfig and type(cfg.agent.hidden) is tuple
-    # Every field is written out in the file, none is left to a default.
+    expected = SHIPPED[name]
+    free = FREE_FIELDS.get(name, ())
+    if free:  # device cpu or cuda, torch_threads null or >= 1: the benchmark of D7 decides
+        assert cfg.agent.device in ("cpu", "cuda")
+        assert cfg.agent.torch_threads is None or cfg.agent.torch_threads >= 1
+        cfg = dataclasses.replace(cfg, agent=dataclasses.replace(cfg.agent, **{f: getattr(expected.agent, f) for f in free}))
+    assert cfg == expected
+    assert type(cfg.agent) is DQNConfig and type(cfg.agent.hidden) is tuple and type(cfg.agent.conv_channels) is tuple
+    assert cfg.agent.replay is True
     written = yaml.safe_load((CONFIGS / name).read_text(encoding="utf-8"))
-    assert set(written["agent"]) == {"kind", *(f.name for f in dataclasses.fields(DQNConfig))}
+    every_key = {"kind", *(f.name for f in dataclasses.fields(DQNConfig))}
+    if cfg.env.obs.kind == "B":
+        # Every field is written out in the file, none is left to a default.
+        assert set(written["agent"]) == every_key
+        assert written["env"]["obs"] == {"kind": "B", "age_plane": True, "heading_planes": True}
+    else:
+        # conv_channels is unused on observation A; D6 adds the line ``replay: true`` to "the two shipped
+        # A configs" (the experiment files, whose comment says every DQNConfig field is written out).
+        assert every_key - {"conv_channels", "replay"} <= set(written["agent"]) <= every_key
+        if name.startswith("dqn_A"):
+            assert written["agent"]["replay"] is True
     assert set(written["train"]) == {f.name for f in dataclasses.fields(TrainConfig)}
 
 
@@ -420,7 +548,9 @@ INT_FIELDS = ("agent.batch_size", "agent.buffer_size", "agent.learning_starts", 
 NULLABLE = ("agent.grad_steps_per_vec_step", "agent.torch_threads")
 NUMBER_FIELDS = ("agent.gamma", "agent.lr", "agent.grad_clip", "agent.eps_start", "agent.eps_end",
                  "agent.eps_decay_fraction")
-FLAGS = ("agent.double", "agent.keep_checkpoints")
+FLAGS = ("agent.double", "agent.keep_checkpoints", "agent.replay")
+#: Two list-of-positive-integers fields with the same checks (M6: conv_channels).
+LIST_FIELDS = ("agent.hidden", "agent.conv_channels")
 
 #: (changes to the valid dict, key the error must name)
 INVALID = [
@@ -443,15 +573,15 @@ INVALID = [
     *[({key: 1}, key) for key in FLAGS],
     *[({key: "true"}, key) for key in FLAGS],
     *[({key: None}, key) for key in FLAGS],
-    ({"agent.hidden": 64}, "agent.hidden"),
-    ({"agent.hidden": "64"}, "agent.hidden"),
-    ({"agent.hidden": None}, "agent.hidden"),
-    ({"agent.hidden": [64, 0]}, "agent.hidden"),
-    ({"agent.hidden": [-8]}, "agent.hidden"),
-    ({"agent.hidden": [64.0]}, "agent.hidden"),
-    ({"agent.hidden": [True]}, "agent.hidden"),
-    ({"agent.hidden": [[64]]}, "agent.hidden"),
-    ({"agent.hidden": {"a": 64}}, "agent.hidden"),
+    *[({key: 64}, key) for key in LIST_FIELDS],
+    *[({key: "64"}, key) for key in LIST_FIELDS],
+    *[({key: None}, key) for key in LIST_FIELDS],
+    *[({key: [64, 0]}, key) for key in LIST_FIELDS],
+    *[({key: [-8]}, key) for key in LIST_FIELDS],
+    *[({key: [64.0]}, key) for key in LIST_FIELDS],
+    *[({key: [True]}, key) for key in LIST_FIELDS],
+    *[({key: [[64]]}, key) for key in LIST_FIELDS],
+    *[({key: {"a": 64}}, key) for key in LIST_FIELDS],
     ({"agent.device": "gpu"}, "agent.device"),
     ({"agent.device": "cuda:0"}, "agent.device"),
     ({"agent.device": 0}, "agent.device"),
@@ -483,9 +613,15 @@ INVALID = [
     ({"agent.torch_threads": 0}, "agent.torch_threads"),
     ({"agent.torch_threads": -2}, "agent.torch_threads"),
     # ---- combinations
-    ({"env.obs.kind": "B"}, "env.obs.kind"),  # the CNN for observation B arrives in M6
     ({"env.reward.variant": "R2"}, "env.reward.gamma"),  # 0.99 against agent.gamma 0.9
     ({"env.reward.variant": "R2"}, "agent.gamma"),
+    # M6: without replay there is exactly one gradient step per vec-step
+    ({"agent.replay": False, "agent.grad_steps_per_vec_step": 2}, "agent.grad_steps_per_vec_step"),
+    ({"agent.replay": False, "agent.grad_steps_per_vec_step": 3}, "agent.grad_steps_per_vec_step"),
+    # M6: with replay the buffer must hold at least one vec-step (n_envs = 8; batch_size 4 <= 7 is fine)
+    ({"agent.buffer_size": 7, "agent.batch_size": 4, "agent.learning_starts": 8}, "agent.buffer_size"),
+    ({"agent.replay": True, "agent.buffer_size": 4, "agent.batch_size": 4, "agent.learning_starts": 8},
+     "agent.buffer_size"),
     # ---- the shared sections are checked as for every kind
     ({"train.n_envs": 7}, "train.eval_every"),
     ({"env.W": 3}, "env.W"),
@@ -504,9 +640,28 @@ def test_invalid_dqn_config_is_a_value_error_naming_the_key(case, tmp_path):
     assert names_key(message, key), message
 
 
-def test_observation_b_is_refused_with_the_milestone_that_brings_it(tmp_path):
-    message = config_error(write_yaml(tmp_path / "c.yaml", edited({"env.obs.kind": "B"})))
-    assert "M6" in message and "dqn" in message
+def test_no_replay_with_several_gradient_steps_per_vec_step_is_explained(tmp_path):
+    """M6 (D3): the message names the key and says it is about replay."""
+    message = config_error(write_yaml(tmp_path / "c.yaml",
+                                      edited({"agent.replay": False, "agent.grad_steps_per_vec_step": 2})))
+    assert names_key(message, "agent.grad_steps_per_vec_step") and "replay" in message, message
+    assert "replay" in config_error(SMOKE, ["agent.replay=false", "agent.grad_steps_per_vec_step=4"])
+
+
+@pytest.mark.parametrize("age_plane, heading_planes", [(True, True), (False, True), (True, False), (False, False)])
+def test_observation_b_is_accepted_for_dqn_and_still_refused_for_tabular_q(age_plane, heading_planes, tmp_path):
+    """M6 (D3): the M5 refusal of observation B for dqn is gone, with any plane set."""
+    changes = {"env.obs.kind": "B", "env.obs.age_plane": age_plane, "env.obs.heading_planes": heading_planes}
+    cfg = load_config(write_yaml(tmp_path / "c.yaml", edited(changes)))
+    assert cfg.agent_kind == "dqn" and type(cfg.agent) is DQNConfig
+    assert cfg.env.obs == ObsConfig(kind="B", age_plane=age_plane, heading_planes=heading_planes)
+    assert cfg.env.obs.shape(cfg.env.W) == (3 + int(age_plane) + 4 * int(heading_planes), 8, 8)
+    assert config_from_dict(config_to_dict(cfg)) == cfg
+    # The M6 ablations are run with --set on the shipped files.
+    overrides = [f"env.obs.age_plane={str(age_plane).lower()}", f"env.obs.heading_planes={str(heading_planes).lower()}"]
+    assert load_config(SMOKE, ["env.obs.kind=B", "exp=smoke_B", *overrides]).env.obs == cfg.env.obs
+    message = config_error(SMOKE_TABULAR, ["env.obs.kind=B", *overrides])
+    assert names_key(message, "env.obs.kind") and "tabular_q" in message, message
 
 
 def test_switching_the_kind_of_a_tabular_file_names_the_kind_and_the_stray_key():
@@ -546,6 +701,22 @@ VALID = [
     ({"env.reward.variant": "R2", "env.reward.gamma": 0.9}, lambda c: c.env.reward.gamma == c.agent.gamma == 0.9),
     ({"env.reward.variant": "R1"}, lambda c: c.env.reward.gamma != c.agent.gamma),  # only R2 ties the two
     ({"env.action_mode": "absolute"}, lambda c: c.env.action_mode == "absolute"),
+    # ---- M6
+    ({"agent.replay": False}, lambda c: c.agent.replay is False),
+    ({"agent.replay": False, "agent.grad_steps_per_vec_step": 1}, lambda c: c.agent.grad_steps_per_vec_step == 1),
+    ({"agent.replay": False, "agent.grad_steps_per_vec_step": None}, lambda c: c.agent.grad_steps_per_vec_step is None),
+    # without replay the buffer size is not held against n_envs (it is unused)
+    ({"agent.replay": False, "agent.buffer_size": 1, "agent.batch_size": 1, "agent.learning_starts": 8},
+     lambda c: c.agent.buffer_size == 1 < c.train.n_envs),
+    # with replay: buffer_size == n_envs is the boundary
+    ({"agent.buffer_size": 8, "agent.batch_size": 8, "agent.learning_starts": 8},
+     lambda c: c.agent.buffer_size == c.train.n_envs == 8),
+    ({"agent.conv_channels": []}, lambda c: c.agent.conv_channels == ()),
+    ({"agent.conv_channels": [8]}, lambda c: c.agent.conv_channels == (8,)),
+    ({"agent.conv_channels": [32, 64, 64]}, lambda c: c.agent.conv_channels == (32, 64, 64)),
+    ({"agent.conv_channels": [4], "env.obs.kind": "B"}, lambda c: c.env.obs.kind == "B" and c.agent.conv_channels == (4,)),
+    ({"agent.conv_channels": [], "env.obs.kind": "B"}, lambda c: c.agent.conv_channels == ()),  # the MLP on B
+    ({"agent.conv_channels": [4], "env.obs.kind": "A"}, lambda c: c.agent.conv_channels == (4,)),  # kept, unused
 ]
 
 
@@ -555,6 +726,7 @@ def test_dqn_boundary_values_are_accepted(case, tmp_path):
     cfg = load_config(write_yaml(tmp_path / "c.yaml", edited(changes)))
     assert check(cfg)
     assert type(cfg.agent.batch_size) is int and type(cfg.agent.hidden) is tuple
+    assert type(cfg.agent.conv_channels) is tuple and type(cfg.agent.replay) is bool
 
 
 def test_dqn_overrides_and_frozen_config():
@@ -567,19 +739,38 @@ def test_dqn_overrides_and_frozen_config():
     with pytest.raises(dataclasses.FrozenInstanceError):
         cfg.agent.lr = 1.0
     assert "1.0e-3" in config_error(SMOKE, ["agent.lr=1e-3"])  # the YAML trap is explained for dqn keys too
+    # M6 overrides on the shipped files: the ablation switches and the CNN sizes.
+    cfg = load_config(SMOKE_B, ["agent.replay=false", "agent.conv_channels=[]", "env.obs.age_plane=false",
+                                "agent.target_update_every=1", "exp=ablation"])
+    base = load_config(SMOKE_B)
+    assert cfg.agent == dataclasses.replace(base.agent, replay=False, conv_channels=(), target_update_every=1)
+    assert cfg.env.obs == ObsConfig(kind="B", age_plane=False, heading_planes=True) and cfg.exp == "ablation"
 
 
-def test_dqn_config_to_dict_spells_out_every_field_with_hidden_as_a_list():
+@pytest.mark.parametrize("override", ["agent.lr=1.0e9", "agent.lr=1e-3", "agent.lr=1e9"])
+def test_set_number_hint_covers_an_exponent_without_a_sign(override):
+    """M6 (D3): PyYAML reads ``1.0e9`` as a string too (the exponent needs a
+    sign); the hint says to write a dot AND a sign, e.g. ``1.0e-3``, ``1.0e+9``."""
+    message = config_error(SMOKE, [override])
+    assert names_key(message, "agent.lr"), message
+    assert "1.0e+9" in message or "1.0e-3" in message, message
+
+
+def test_dqn_config_to_dict_spells_out_every_field_with_the_tuples_as_lists():
     d = config_to_dict(load_config(SMOKE))
     assert d["agent"] == {
-        "kind": "dqn", "gamma": 0.9, "lr": 2.5e-4, "batch_size": 64, "buffer_size": 10000, "learning_starts": 1024,
-        "grad_steps_per_vec_step": None, "target_update_every": 250, "grad_clip": 10.0, "eps_start": 1.0,
-        "eps_end": 0.05, "eps_decay_fraction": 0.2, "hidden": [64, 64], "double": False, "keep_checkpoints": True,
-        "device": "cpu", "torch_threads": 1,
+        "kind": "dqn", "gamma": 0.9, "lr": 2.5e-4, "batch_size": 64, "buffer_size": 10000, "replay": True,
+        "learning_starts": 1024, "grad_steps_per_vec_step": None, "target_update_every": 250, "grad_clip": 10.0,
+        "eps_start": 1.0, "eps_end": 0.05, "eps_decay_fraction": 0.2, "hidden": [64, 64],
+        "conv_channels": [32, 64, 64], "double": False, "keep_checkpoints": True, "device": "cpu", "torch_threads": 1,
     }
-    assert type(d["agent"]["hidden"]) is list
+    assert type(d["agent"]["hidden"]) is list and type(d["agent"]["conv_channels"]) is list
     assert list(d) == ["exp", "env", "agent", "train"]
     assert list(d["agent"]) == ["kind", *(f.name for f in dataclasses.fields(DQNConfig))]
+    b = config_to_dict(load_config(SMOKE_B))
+    assert b["agent"]["conv_channels"] == [16, 32] and b["agent"]["hidden"] == [128] and b["agent"]["replay"] is True
+    assert b["env"]["obs"] == {"kind": "B", "age_plane": True, "heading_planes": True}
+    assert config_to_dict(load_config(SMOKE, ["agent.conv_channels=[]"]))["agent"]["conv_channels"] == []
 
 
 ROUND_TRIP = [
@@ -589,6 +780,15 @@ ROUND_TRIP = [
     (SMOKE, TINY),
     (SMOKE, VARIANT),
     (SMOKE, ("agent.hidden=[]", "env.reward.variant=R2", "env.reward.gamma=0.9", "agent.lr=1.2345678901234567e-4")),
+    # M6
+    (SMOKE_B, ()),
+    (CONFIGS / "dqn_B_8x8.yaml", ()),
+    (CONFIGS / "dqn_B_10x10.yaml", ()),
+    (SMOKE_B, TINY_B),
+    (SMOKE, NOREPLAY),
+    (SMOKE_B, ("agent.conv_channels=[]", "agent.replay=false", "env.obs.age_plane=false",
+               "env.obs.heading_planes=false", "agent.target_update_every=1")),
+    (SMOKE, ("env.obs.kind=B", "agent.conv_channels=[16]")),
 ]
 
 
@@ -780,12 +980,12 @@ def test_last_metrics_row_is_the_final_evaluation(tiny_run):
         assert last[f"eval_frac_{cause}"] == summary["cause_fractions"][cause]
 
 
-@pytest.mark.parametrize("which", ["tiny_run", "variant_run"])
+@pytest.mark.parametrize("which", ["tiny_run", "variant_run", "tiny_b_run", "noreplay_run"])
 def test_final_eval_is_the_scalar_greedy_evaluation_of_the_saved_model(which, request):
     run = request.getfixturevalue(which)
     cfg, tc = run.cfg, run.cfg.train
     agent = DQNAgent.load(run.dir / "model.pt")
-    assert agent.cfg == cfg.agent and agent.obs_shape == (11,) and agent.n_actions == 3
+    assert agent.cfg == cfg.agent and agent.obs_shape == cfg.env.obs.shape(cfg.env.W) and agent.n_actions == 3
     stored = json.loads((run.dir / "final_eval.json").read_text(encoding="utf-8"))
     final = EvalResult.load(run.dir / "final_eval.json")
     assert [e.seed for e in final.episodes] == list(range(tc.eval_seed, tc.eval_seed + tc.eval_episodes))
@@ -797,7 +997,7 @@ def test_final_eval_is_the_scalar_greedy_evaluation_of_the_saved_model(which, re
     assert not list(run.dir.glob("*.tmp"))  # written next to it, then renamed
 
 
-@pytest.mark.parametrize("which", ["tiny_run", "variant_run"])
+@pytest.mark.parametrize("which", ["tiny_run", "variant_run", "tiny_b_run", "noreplay_run"])
 def test_each_checkpoint_reproduces_the_evaluation_of_its_metrics_row(which, request):
     run = request.getfixturevalue(which)
     cfg, tc = run.cfg, run.cfg.train
@@ -814,8 +1014,19 @@ def test_each_checkpoint_reproduces_the_evaluation_of_its_metrics_row(which, req
         assert result.mean_score == row["eval_mean_score"]
         for name, value in train_module.eval_columns(result).items():
             assert row[name] == value, (name, row["env_steps"])
-    # The checkpoints are different networks, not one file four times: they play differently.
-    assert len({(row["eval_mean_score"], row["eval_mean_steps"], row["eval_frac_starve"]) for row in rows}) >= 3
+    # The checkpoints are different networks, not one file four times: their tensors differ wherever
+    # a gradient step lies between them ...
+    files = [flat(run.dir / "checkpoints" / name) for name in names]
+    for i in range(len(files)):
+        for j in range(i + 1, len(files)):
+            if rows[i]["grad_steps"] != rows[j]["grad_steps"]:
+                assert files[i] != files[j], (names[i], names[j])
+            else:
+                assert files[i] == files[j], (names[i], names[j])  # nothing learned in between: the same network
+    # ... and they play differently (the MLP runs change their play at every row; the tiny CNN, which
+    # starves at every evaluation of its 2400-step budget, at least once).
+    play = {(row["eval_mean_score"], row["eval_mean_steps"], row["eval_frac_starve"]) for row in rows}
+    assert len(play) >= (2 if which == "tiny_b_run" else 3), play
 
 
 def test_model_file_is_the_last_checkpoint_plus_the_optimizer(tiny_run):
@@ -829,6 +1040,60 @@ def test_model_file_is_the_last_checkpoint_plus_the_optimizer(tiny_run):
     fresh = DQNAgent((11,), 3, tiny_run.cfg.agent, seed=TINY_SEED)
     fresh.save(tiny_run.runs / "fresh_init.pt", include_optimizer=False)
     assert flat(tiny_run.runs / "fresh_init.pt") == first
+
+
+# ========================================================= M6: a run on observation B
+def test_a_b_run_writes_the_run_files_and_trains_the_cnn(tiny_b_run):
+    cfg, run_dir = tiny_b_run.cfg, tiny_b_run.dir
+    assert cfg.env.obs == OBS_B8 and cfg.agent.conv_channels == (4, 4) and cfg.agent.hidden == (16,)
+    assert run_dir == tiny_b_run.runs / "tiny_dqn_B" / str(TINY_SEED)
+    assert sorted(p.name for p in run_dir.iterdir()) == RUN_ENTRIES
+    assert checkpoint_names(run_dir) == ["step_00000000.pt", "step_00000800.pt", "step_00001600.pt",
+                                         "step_00002400.pt"]
+    recorded = read_run_config(run_dir)
+    run = recorded.pop("run")
+    assert recorded == config_to_dict(cfg)
+    assert recorded["agent"]["conv_channels"] == [4, 4] and recorded["env"]["obs"]["kind"] == "B"
+    assert run["device"] == "cpu" and run["torch_threads"] == 1 and run["env_seed"] == 100_000 * (TINY_SEED + 1)
+    assert load_config(run_dir / "config.yaml") == cfg
+
+    rows = read_metrics(run_dir)
+    assert (run_dir / "metrics.csv").read_text(encoding="utf-8").splitlines()[0] == HEADER
+    assert [r["env_steps"] for r in rows] == [0, 800, 1_600, 2_400]
+    assert [r["grad_steps"] for r in rows] == [0, 0, 152, 352]  # 8 boards: 2 gradient steps per vec-step from 1000 on
+    assert [r["buffer_size"] for r in rows] == [0, 800, 1_000, 1_000]
+    for row in rows[:2]:
+        assert all(row[name] is None for name in UPDATE_COLUMNS)
+    for row in rows[2:]:
+        assert all(np.isfinite(row[name]) for name in UPDATE_COLUMNS) and row["loss"] > 0 and row["grad_norm"] > 0
+    assert all(rows[0][name] == rows[1][name] for name in train_module.EVAL_COLUMNS)
+
+    agent = DQNAgent.load(run_dir / "model.pt")
+    assert isinstance(agent.q_net, CNN) and agent.obs_shape == (8, 8, 8) and agent.grad_steps == 352
+    assert agent.cfg == cfg.agent and agent.cfg.conv_channels == (4, 4)
+    convs = [m for m in agent.q_net.modules() if isinstance(m, torch.nn.Conv2d)]
+    assert [tuple(c.weight.shape) for c in convs] == [(4, 8, 3, 3), (4, 4, 3, 3)]
+    linears = [m for m in agent.q_net.modules() if isinstance(m, torch.nn.Linear)]
+    assert [tuple(m.weight.shape) for m in linears] == [(16, 4 * 64), (3, 16)]
+    # The convolutions trained: the saved model differs from the initial network in every layer.
+    first = flat(run_dir / "checkpoints" / "step_00000000.pt")
+    last = flat(run_dir / "checkpoints" / "step_00002400.pt")
+    assert first["/grad_steps"] == 0 and last["/grad_steps"] == 352
+    for key in first:
+        if key.startswith("/q_net/") and key.endswith(".weight"):
+            assert first[key] != last[key], key
+    # Row 0 is the CNN as initialised from the run seed.
+    fresh = DQNAgent((8, 8, 8), 3, cfg.agent, seed=TINY_SEED)
+    fresh.save(tiny_b_run.runs / "fresh_init.pt", include_optimizer=False)
+    assert flat(tiny_b_run.runs / "fresh_init.pt") == first
+
+
+def test_a_b_run_is_deterministic(tiny_b_run, tmp_path):
+    again = train(tiny_b_run.cfg, tiny_b_run.seed, tmp_path / "again", quiet=True)
+    assert_same_run(tiny_b_run.dir, again)
+    other = train(tiny_b_run.cfg, tiny_b_run.seed + 1, tmp_path / "other", quiet=True)
+    assert flat(other / "model.pt")["/grad_steps"] == 352
+    assert final_episodes(other) != final_episodes(tiny_b_run.dir) or metrics_without_times(other) != metrics_without_times(tiny_b_run.dir)
 
 
 def test_keep_checkpoints_false_writes_no_checkpoints_and_cli_prints_progress(tmp_path, capsys):
@@ -954,9 +1219,10 @@ def reference_run(cfg: ExperimentConfig, seed: int, tmp_path: Path):
     return agent.save(tmp_path / "reference_model.pt"), rows, results[-1]
 
 
-@pytest.mark.parametrize("which", ["variant_run", "tiny_run"])
+@pytest.mark.parametrize("which", ["variant_run", "tiny_run", "tiny_b_run"])
 def test_independent_loop_reproduces_train_exactly(which, request, tmp_path):
     run = request.getfixturevalue(which)
+    assert run.cfg.agent.replay
     model, rows, final = reference_run(run.cfg, run.seed, tmp_path)
     assert flat(run.dir / "model.pt") == flat(model)  # both networks, the optimiser state, grad_steps, the config
     assert final_episodes(run.dir) == final.episodes
@@ -1022,6 +1288,164 @@ def test_train_truncated_counts_the_starved_training_episodes(variant_run):
         assert 0 < row["train_truncated"] < row["train_episodes"]
 
 
+# ================================================ M6: the loop without replay
+def test_noreplay_run_feeds_each_vec_step_to_exactly_one_update(noreplay_run):
+    """D4: no ``ReplayBuffer``; from ``learning_starts`` on, every vec-step is
+    followed by one ``agent.update`` on a ``Batch`` of that vec-step's own
+    arrays: the observation the actions were chosen from, the actions, the
+    rewards, ``info["final_obs"]`` and ``terminated`` (never ``done``)."""
+    cfg, steps, observed, updates = noreplay_run.cfg, noreplay_run.steps, noreplay_run.observed, noreplay_run.updates
+    ac, n = cfg.agent, cfg.train.n_envs
+    assert not ac.replay and ac.grad_steps_per_vec_step == 1
+    assert noreplay_run.buffers == []  # no replay buffer was constructed
+    assert noreplay_run.envs == [(cfg.env, n, 100_000 * (NOREPLAY_SEED + 1))]
+    assert len(steps) == cfg.train.total_env_steps // n
+    learning = [k for k in range(len(steps)) if (k + 1) * n >= ac.learning_starts]
+    assert len(updates) == len(learning) == len(steps) - (-(-ac.learning_starts // n)) + 1 == 251
+    truncated_total = terminated_total = moved_on = 0
+    for j, (k, update) in enumerate(zip(learning, updates)):
+        assert update.grad_steps == j  # one gradient step per vec-step, in order
+        batch, step = update.batch, steps[k]
+        assert batch.obs.shape == (n, 11) and batch.next_obs.shape == (n, 11)
+        assert batch.actions.shape == batch.rewards.shape == batch.terminated.shape == (n,)
+        assert np.array_equal(batch.obs, observed[k])  # the observation the action was chosen from
+        assert np.array_equal(batch.actions, step.actions) and batch.actions.dtype == np.int64
+        assert np.array_equal(batch.rewards, step.reward)
+        assert np.array_equal(batch.next_obs, step.final_obs)  # true successor, not the post-reset obs
+        assert batch.terminated.dtype == np.bool_ and np.array_equal(batch.terminated, step.terminated)
+        assert not batch.terminated[step.truncated].any()  # a truncated transition is not terminal
+        truncated_total += int(step.truncated.sum())
+        terminated_total += int(step.terminated.sum())
+        ended = step.terminated | step.truncated
+        moved_on += int((step.final_obs[ended] != observed[k + 1][ended]).any(axis=1).sum())
+    # The run must contain what the assertions above are about.
+    assert truncated_total > 20 and terminated_total > 20 and moved_on > 20
+
+
+def test_noreplay_metrics_columns(noreplay_run):
+    """D4: ``grad_steps`` counts the vec-steps with ``env_steps >= learning_starts``,
+    ``buffer_size`` is 0 in every row, the rest as with replay."""
+    cfg = noreplay_run.cfg
+    ac, n = cfg.agent, cfg.train.n_envs
+    lines = (noreplay_run.dir / "metrics.csv").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == HEADER
+    rows = read_metrics(noreplay_run.dir)
+    assert [r["env_steps"] for r in rows] == [0, 600, 1_200, 1_800]
+    # 6 boards, learning from vec-step 50 (300 env steps) on: one gradient step per vec-step.
+    assert [r["grad_steps"] for r in rows] == [0, 51, 151, 251]
+    assert [r["grad_steps"] for r in rows] == [
+        sum(1 for v in range(1, r["vec_steps"] + 1) if v * n >= ac.learning_starts) for r in rows]
+    assert [r["grad_steps"] for r in rows] == [expected_grad_steps(cfg, r["vec_steps"]) for r in rows]
+    assert [r["buffer_size"] for r in rows] == [0, 0, 0, 0]
+    assert all(rows[0][name] is None for name in UPDATE_COLUMNS) and rows[0]["time_update_s"] == 0.0
+    for row in rows[1:]:
+        assert all(np.isfinite(row[name]) for name in UPDATE_COLUMNS) and row["loss"] > 0 and row["grad_norm"] > 0
+        assert row["time_update_s"] > 0
+    assert rows[0]["epsilon"] == ac.eps_start and ac.eps_end < rows[1]["epsilon"] < ac.eps_start
+    assert sum(r["train_episodes"] for r in rows) > 50
+    agent = DQNAgent.load(noreplay_run.dir / "model.pt")
+    assert agent.grad_steps == 251 and agent.cfg == ac and agent.cfg.replay is False
+    assert sorted(p.name for p in noreplay_run.dir.iterdir()) == RUN_ENTRIES
+    assert checkpoint_names(noreplay_run.dir) == [f"step_{s:08d}.pt" for s in (0, 600, 1_200, 1_800)]
+    assert load_config(noreplay_run.dir / "config.yaml") == cfg
+
+
+def reference_noreplay_run(cfg: ExperimentConfig, seed: int, tmp_path: Path):
+    """The no-replay loop of D4, written out from its pseudo-code: a ``Batch``
+    of the vec-step's own arrays and one ``agent.update`` per vec-step from
+    ``learning_starts`` on; ``sample_rng`` is created and never drawn. Returns
+    (model file, metrics rows, final evaluation)."""
+    ac, tc = cfg.agent, cfg.train
+    n = tc.n_envs
+    torch.set_num_threads(ac.torch_threads)
+    env = VecSnakeEnv(cfg.env, n, seed=100_000 * (seed + 1))  # env_seed_for(seed, n_envs)
+    obs = env.reset()
+    agent = DQNAgent(env.obs_shape, env.n_actions, ac, seed=seed)
+    explore_rng = np.random.default_rng([seed, 1])
+    sample_rng = np.random.default_rng([seed, 2])  # created, never drawn
+    untouched = np.random.default_rng([seed, 2]).bit_generator.state
+    decay_steps = ac.eps_decay_fraction * tc.total_env_steps
+    rows: list[dict] = []
+    results: list[EvalResult] = []
+
+    def evaluation(env_steps, epsilon, scores, n_truncated, stats):
+        result = evaluate(agent, cfg.env, tc.eval_episodes, tc.eval_seed)  # scalar env, one episode at a time
+        results.append(result)
+        rows.append({
+            "env_steps": env_steps,
+            "vec_steps": env_steps // n,
+            "grad_steps": agent.grad_steps,
+            "epsilon": epsilon,
+            "eval_mean_score": float(result.scores.mean()),
+            "eval_max_score": int(result.scores.max()),
+            "eval_mean_steps": float(result.steps.mean()),
+            "eval_frac_starve": result.cause_fractions["starve"],
+            "train_episodes": len(scores),
+            "train_mean_score": float(np.mean(scores)) if scores else None,
+            "train_truncated": n_truncated,
+            **{name: float(np.mean([s[name] for s in stats])) if stats else None for name in UPDATE_COLUMNS},
+            "buffer_size": 0,
+        })
+
+    evaluation(0, ac.eps_start, [], 0, [])  # row 0
+    scores, n_truncated, stats = [], 0, []
+    for k in range(tc.total_env_steps // n):
+        epsilon = linear_schedule(k * n, ac.eps_start, ac.eps_end, decay_steps)
+        actions = agent.act_epsilon(obs, epsilon, explore_rng)
+        next_obs, reward, terminated, truncated, info = env.step(actions)
+        env_steps = (k + 1) * n
+        if env_steps >= ac.learning_starts:
+            stats.append(agent.update(Batch(obs=obs, actions=actions, rewards=reward, next_obs=info["final_obs"],
+                                            terminated=terminated)))  # ONE gradient step, this vec-step's transitions
+        obs = next_obs
+        scores.extend(info["score"][info["done"]].tolist())
+        n_truncated += int(truncated.sum())
+        if env_steps % tc.eval_every == 0:
+            evaluation(env_steps, epsilon, scores, n_truncated, stats)
+            scores, n_truncated, stats = [], 0, []
+    assert sample_rng.bit_generator.state == untouched
+    return agent.save(tmp_path / "reference_noreplay_model.pt"), rows, results[-1]
+
+
+def test_independent_noreplay_loop_reproduces_train_exactly(noreplay_run, tmp_path):
+    run = noreplay_run
+    model, rows, final = reference_noreplay_run(run.cfg, run.seed, tmp_path)
+    assert flat(run.dir / "model.pt") == flat(model)  # both networks, the optimiser state, grad_steps, the config
+    assert final_episodes(run.dir) == final.episodes
+
+    written = read_metrics(run.dir)
+    assert len(written) == len(rows) == 4
+    for got, want in zip(written, rows):
+        for name, value in want.items():
+            if name in (*UPDATE_COLUMNS, "train_mean_score") and value is not None:
+                assert got[name] == pytest.approx(value, rel=1e-9), name  # summation order is free
+            else:
+                assert got[name] == value, (name, want["env_steps"])
+    assert rows[-1]["grad_steps"] == 251
+
+
+def test_noreplay_run_is_deterministic_and_differs_from_the_replay_run(noreplay_run, tmp_path):
+    again = train(noreplay_run.cfg, noreplay_run.seed, tmp_path / "again", quiet=True)
+    assert_same_run(noreplay_run.dir, again)
+    # The same configuration with a replay buffer (one gradient step per vec-step as well) is another run.
+    with_replay = load_config(SMOKE, [*NOREPLAY, "agent.replay=true", "exp=replay_dqn"])
+    assert with_replay.agent == dataclasses.replace(noreplay_run.cfg.agent, replay=True)
+    other = train(with_replay, noreplay_run.seed, tmp_path / "replay", quiet=True)
+    rows = read_metrics(other)
+    assert [r["grad_steps"] for r in rows] == [0, 51, 151, 251]
+    assert [r["buffer_size"] for r in rows] == [0, 500, 500, 500]
+    a, b = flat(noreplay_run.dir / "model.pt"), flat(other / "model.pt")
+    assert a["/q_net/net.0.weight"] != b["/q_net/net.0.weight"]
+    assert a["/config/replay"] is False and b["/config/replay"] is True
+
+    def network(path: Path) -> dict:
+        return {key: value for key, value in flat(path).items() if key.startswith("/q_net/")}
+
+    # The same initial network (same seed): the two runs part ways through the updates only.
+    assert network(noreplay_run.dir / "checkpoints" / "step_00000000.pt") == network(other / "checkpoints" / "step_00000000.pt")
+    assert network(noreplay_run.dir / "checkpoints" / "step_00000600.pt") != network(other / "checkpoints" / "step_00000600.pt")
+
+
 # =========================================================== abort on NaN
 def test_a_non_finite_update_aborts_the_run(tmp_path, monkeypatch, capsys):
     real_update = DQNAgent.update
@@ -1039,12 +1463,26 @@ def test_a_non_finite_update_aborts_the_run(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr()
     assert out.out == "" and out.err.startswith("error: non-finite DQN update at gradient step 120")
     run_dir = tmp_path / "tiny_dqn" / "0"
-    # Unfinished and recognisable as such: no final_eval.json, no model.pt.
-    assert sorted(p.name for p in run_dir.iterdir()) == ["checkpoints", "config.yaml", "metrics.csv"]
+    # Unfinished and recognisable as such: no final_eval.json, no model.pt; M6: the aborted.json marker.
+    assert sorted(p.name for p in run_dir.iterdir()) == ["aborted.json", "checkpoints", "config.yaml", "metrics.csv"]
     rows = read_metrics(run_dir)  # closed and readable, with the rows written before the abort
     assert [r["env_steps"] for r in rows] == [0, 800]
     assert checkpoint_names(run_dir) == ["step_00000000.pt", "step_00000800.pt"]
-    assert len(calls) == 120
+    assert len(calls) == 120 and calls[-1] == 119
+    # D4: the marker names the vec-step whose update failed and the completed gradient steps. TINY: 8
+    # boards, 2 gradient steps per vec-step from vec-step 125 (1000 env steps) on, so call 120 is the
+    # second update of vec-step 125 + 59 = 184 (1472 env steps), after 119 completed gradient steps.
+    cfg = load_config(SMOKE, TINY)
+    n = cfg.train.n_envs
+    per_vec_step = max(1, n // 4)
+    failing_vec_step = -(-cfg.agent.learning_starts // n) + (120 - 1) // per_vec_step
+    assert failing_vec_step == 184 and 800 < failing_vec_step * n < 1600
+    marker = json.loads((run_dir / "aborted.json").read_text(encoding="utf-8"))
+    assert isinstance(marker, dict) and {"error", "env_steps", "vec_steps", "grad_steps"} <= set(marker)
+    assert marker["error"] == "non-finite DQN update at gradient step 120: loss nan, gradient norm nan"
+    assert marker["env_steps"] == failing_vec_step * n == 1472 and type(marker["env_steps"]) is int
+    assert marker["vec_steps"] == failing_vec_step and type(marker["vec_steps"]) is int
+    assert marker["grad_steps"] == 119 and type(marker["grad_steps"]) is int
     # The aborted run is not resumed or overwritten.
     before = tree(tmp_path)
     assert main(argv) == 1
@@ -1056,12 +1494,57 @@ def test_a_non_finite_update_aborts_the_run(tmp_path, monkeypatch, capsys):
     with pytest.raises(FloatingPointError, match="gradient step 120"):
         train(load_config(SMOKE, TINY), 1, tmp_path, quiet=True)
     assert not (tmp_path / "tiny_dqn" / "1" / "final_eval.json").exists()
+    assert not (tmp_path / "tiny_dqn" / "1" / "model.pt").exists()
     with open(tmp_path / "tiny_dqn" / "1" / "metrics.csv", "a", encoding="utf-8"):
         pass  # the file handle was released
+    marker = json.loads((tmp_path / "tiny_dqn" / "1" / "aborted.json").read_text(encoding="utf-8"))
+    assert (marker["env_steps"], marker["vec_steps"], marker["grad_steps"]) == (1472, 184, 119)
+    assert marker["error"].startswith("non-finite DQN update at gradient step 120")
+
+
+def test_a_noreplay_abort_counts_vec_steps_as_gradient_steps(tmp_path, monkeypatch):
+    """Without replay one update per vec-step: the marker of a failure at
+    update 30 names vec-step 50 + 29 = 79 (474 env steps) and 29 completed steps."""
+    real_update = DQNAgent.update
+    calls = []
+
+    def failing_update(self, batch):
+        calls.append(self.grad_steps)
+        if len(calls) == 30:
+            raise FloatingPointError("non-finite DQN update at gradient step 30: loss inf, gradient norm inf")
+        return real_update(self, batch)
+
+    monkeypatch.setattr(DQNAgent, "update", failing_update)
+    cfg = load_config(SMOKE, NOREPLAY)
+    with pytest.raises(FloatingPointError, match="gradient step 30"):
+        train(cfg, 0, tmp_path, quiet=True)
+    run_dir = tmp_path / "noreplay_dqn" / "0"
+    assert sorted(p.name for p in run_dir.iterdir()) == ["aborted.json", "checkpoints", "config.yaml", "metrics.csv"]
+    marker = json.loads((run_dir / "aborted.json").read_text(encoding="utf-8"))
+    assert marker["error"] == "non-finite DQN update at gradient step 30: loss inf, gradient norm inf"
+    assert (marker["env_steps"], marker["vec_steps"], marker["grad_steps"]) == (79 * 6, 79, 29)
+    assert [r["env_steps"] for r in read_metrics(run_dir)] == [0]
+
+
+def test_a_directory_holding_only_aborted_json_is_refused_with_the_interrupted_run_hint(tmp_path):
+    """D4: ``aborted.json`` is a run file; the refusal says how to repeat an
+    interrupted run under the same name (move its directory away)."""
+    cfg = load_config(SMOKE, TINY)
+    run_dir = tmp_path / cfg.exp / "0"
+    leave_behind(run_dir, ABORTED_FILE)
+    before = tree(tmp_path)
+    with pytest.raises(FileExistsError) as excinfo:
+        train(cfg, 0, tmp_path, quiet=True)
+    message = str(excinfo.value)
+    assert ABORTED_FILE in message and str(run_dir) in message
+    assert "never overwritten" in message and "--exp or --seed" in message
+    assert "move" in message.lower()  # ... the directory out of its experiment directory
+    assert tree(tmp_path) == before
+    assert train_module.ABORTED_FILE == ABORTED_FILE and ABORTED_FILE in train_module.RUN_FILES
 
 
 # ===================================================== runs are never touched
-LEFTOVERS = ["config.yaml", "metrics.csv", "q_table.npz", "model.pt", "final_eval.json", "checkpoints/"]
+LEFTOVERS = ["config.yaml", "metrics.csv", "q_table.npz", "model.pt", "final_eval.json", "checkpoints/", "aborted.json"]
 
 
 def leave_behind(run_dir: Path, leftover: str) -> None:
@@ -1167,3 +1650,64 @@ def test_shipped_smoke_config_ends_far_above_the_random_player(background):
         assert final.mean_score - final.ci95 > 5 * (random_player.mean_score + random_player.ci95)
         curve = [row["eval_mean_score"] for row in read_metrics(run_dir)]
         assert len(curve) == 5 and curve[0] < 1.0 and curve[-1] == final.mean_score
+
+
+def test_shipped_smoke_b_config_runs_in_a_fresh_process(background):
+    """M6 (D6): the observation-B smoke config, as shipped, in a fresh process:
+    exit code 0, every file of a DQN run directory, the CNN of the file, a
+    learning signal in the update statistics, and a final evaluation on the
+    boards of the random player.
+
+    The bar is lower than the A smoke test's (final mean score > 8): the CNN
+    needs far more gradient steps than the MLP before the greedy policy eats.
+    The first draft of the file (two 8-channel layers, 32 hidden units,
+    16,000 steps) scored 0.15 / 0.30 / 0.15 on seeds 0 / 1 / 2 against a
+    random player at 0.15 +- 0.16, i.e. nothing, and 1.35 / 0.90 at 64,000
+    steps; the shipped file (16 / 32 channels, 128 hidden units, 48,000 steps)
+    scores 9.65 on seed 0 and 13.70 on seed 1 (M6 measurement). The bar of 5
+    is far above random and half of the lower measurement. The action values
+    must also show learning: mean_q rises from the first learning row to the
+    last. The loss is no bar: it falls while the targets are near zero and
+    rises again once the policy starts to eat."""
+    done = background("smoke_b")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == ""  # --quiet
+    cfg = load_config(SMOKE_B)  # pinned to D6 by test_shipped_dqn_config_files_load; the rows follow the file
+    ac, tc = cfg.agent, cfg.train
+    assert cfg.env.obs == OBS_B8 and cfg.env.W == 8 and ac.device == "cpu" and ac.torch_threads == 1
+    steps = [i * tc.eval_every for i in range(tc.total_env_steps // tc.eval_every + 1)]
+    run_dir = done.runs / "smoke_dqn_B8_W8" / "0"
+    assert sorted(p.name for p in run_dir.iterdir()) == RUN_ENTRIES
+    assert checkpoint_names(run_dir) == [f"step_{s:08d}.pt" for s in steps]
+    assert load_config(run_dir / "config.yaml") == cfg
+    run = read_run_config(run_dir)["run"]
+    assert run["seed"] == 0 and run["device"] == "cpu" and run["torch_threads"] == 1 and run["argv"] == done.args[2:]
+    rows = read_metrics(run_dir)
+    assert [r["env_steps"] for r in rows] == steps
+    assert [r["grad_steps"] for r in rows] == [expected_grad_steps(cfg, s // tc.n_envs) for s in steps]
+    assert rows[-1]["grad_steps"] > 11_000  # 11,748 at the shipped budget: 4 per vec-step from vec-step 64 on
+    assert [r["buffer_size"] for r in rows] == [min(s, ac.buffer_size) for s in steps]
+    learning = [row for row in rows if row["grad_steps"] > 0]
+    assert len(learning) >= 2
+    for row in learning:
+        assert all(np.isfinite(row[name]) for name in UPDATE_COLUMNS) and row["loss"] > 0 and row["grad_norm"] > 0
+    assert rows[-1]["mean_q"] - learning[0]["mean_q"] > 0.08  # the action values grow towards the food return
+    assert rows[-1]["time_update_s"] > 0 and rows[-1]["time_eval_s"] > 0
+
+    agent = DQNAgent.load(run_dir / "model.pt")
+    assert isinstance(agent.q_net, CNN) and agent.obs_shape == (8, 8, 8) and agent.grad_steps == rows[-1]["grad_steps"]
+    assert agent.cfg == ac
+    convs = [m for m in agent.q_net.modules() if isinstance(m, torch.nn.Conv2d)]
+    assert [tuple(c.weight.shape) for c in convs] == [(c, previous, 3, 3) for c, previous in
+                                                      zip(ac.conv_channels, (8, *ac.conv_channels))]
+    final = EvalResult.load(run_dir / "final_eval.json")
+    assert final.policy == "dqn" and len(final.episodes) == cfg.train.eval_episodes
+    assert evaluate_batched(agent, cfg.env, cfg.train.eval_episodes, cfg.train.eval_seed).episodes == final.episodes
+    random_player = evaluate(make_policy("random", seed=cfg.train.eval_seed), cfg.env, cfg.train.eval_episodes,
+                             cfg.train.eval_seed)
+    assert random_player.mean_score < 1.0
+    assert [e.seed for e in final.episodes] == [e.seed for e in random_player.episodes]  # the same boards
+    assert final.mean_score > 5.0  # measured 9.65 (seed 0); random 0.15
+    assert final.mean_score - final.ci95 > 5 * (random_player.mean_score + random_player.ci95)
+    curve = [row["eval_mean_score"] for row in read_metrics(run_dir)]
+    assert len(curve) == 5 and curve[0] < 1.0 and curve[-1] == final.mean_score
