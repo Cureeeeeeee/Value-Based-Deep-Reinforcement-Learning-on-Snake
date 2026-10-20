@@ -511,6 +511,43 @@ def learning_curve(exp_dir: str | Path) -> pd.DataFrame:
     return _curve_from_runs(load_runs(exp_dir))
 
 
+# ------------------------------------------------------- death causes (M8)
+#: Columns of :func:`death_cause_curve`: per cause, the mean over seeds of
+#: the evaluation fraction and its Student-t 95 % half-width.
+DEATH_CAUSE_COLUMNS = (
+    "env_steps", "n_seeds", "wall_mean", "wall_ci95", "self_mean", "self_ci95", "starve_mean", "starve_ci95",
+    "win_mean", "win_ci95",
+)
+_DEATH_CAUSES = ("wall", "self", "starve", "win")
+
+
+def death_cause_curve(exp_dir: str | Path) -> pd.DataFrame:
+    """How the evaluation episodes end over training, across seeds.
+
+    One row per ``env_steps`` value present in all finished runs (the rows of
+    :func:`learning_curve`, same warning). For every cause ``wall`` /
+    ``self`` / ``starve`` / ``win``: the mean over seeds of the run's
+    ``eval_frac_<cause>`` column and the Student-t 95 % half-width over
+    seeds (nan for one seed). The four means of a row sum to 1. A run
+    without one of the columns raises ``ValueError``.
+    """
+    runs = load_runs(exp_dir)
+    curve = _curve_from_runs(runs)
+    common = curve["env_steps"].to_numpy(dtype=np.int64)
+    out: dict[str, Any] = {"env_steps": common, "n_seeds": len(runs)}
+    for cause in _DEATH_CAUSES:
+        column = f"eval_frac_{cause}"
+        rows = []
+        for r in runs:
+            if column not in r.metrics.columns:
+                raise ValueError(f"{r.run_dir / METRICS_FILE}: missing column {column!r}")
+            rows.append(r.metrics.set_index("env_steps")[column].loc[common].to_numpy(dtype=np.float64))
+        values = np.array(rows).reshape(len(runs), len(common))
+        out[f"{cause}_mean"] = values.mean(axis=0)
+        out[f"{cause}_ci95"] = _t_half_width(values, axis=0)
+    return pd.DataFrame(out, columns=list(DEATH_CAUSE_COLUMNS))
+
+
 # -------------------------------------------- value estimates vs returns (M7)
 def _value_series(run: RunResult, which: str) -> pd.DataFrame:
     """``env_steps``-indexed frame with columns ``value`` and ``return`` of one run.

@@ -27,6 +27,8 @@
 | M7 Double DQN | W8 `double_q_learning` | 已实现，不改 | `agent.py` 的 `update` 已有 `cfg.double`（在线网络选动作、目标网络评估）。它对应 W8 的更新行 `best_next_action = argmax(Q1[s']); TD_target = r + γ·Q2[s', best_next_action]`，报告引用这一对应关系 |
 | M7 过估计测量 | 无 | L3 | **已做（2026-10-20）**：`snake_rl/evaluate.py` 的 `gamma` 参数（每步记 `max_a Q` 与实际折扣回报），`train.py` 每次评估写 4 列 `eval_value_* / eval_return_*`，`scripts/backfill_values.py` 从旧 run 的 checkpoint 补算，`aggregate.value_curve` + `plots --values` 出图 |
 | M7 Dueling、PER | 无 | L3 | **已做（2026-10-20）**：`networks.DuelingMLP`（`# NEW` 标注）、`replay.PrioritizedReplayBuffer`（无 sum tree，见 docstring）。砍单顺序不变：PER → Dueling |
+| M8 奖励轴 R0–R3 | 无（奖励变体是 M1 的环境代码，训练用 `--set env.reward.variant=...`） | — | 不写新训练代码；批次命令见 `docs/PROGRESS.md` |
+| M8 行为分析 | 无（resource 里没有热力图 / 轨迹 / 死因演变的代码） | L3 | **已做（2026-10-21）**：`snake_rl/analysis/behaviour.py`（标量环境上的 rollout、访问热力图、循环 / hacking 统计、临死轨迹图、GUI 兼容的录像导出、CLI），`aggregate.death_cause_curve`，`plots --causes` |
 | M9 GUI | W8 Part C / W9 Part B 的 `run_game`（人类输入 → `env.step` → `render` 的回合循环，人机对战） | 模式参照 | "人玩"和"agent 玩"两种模式的主循环照 `run_game` 的结构组织；pygame 渲染与 Q 值侧栏是 L3 |
 | M10 Colab notebook | 各 resource notebook 的安装格；W9 Part C 的 `plot_results` | L1 / 参照 | 安装格照 resource 写法（`!pip install ...`）；主图仍由 `snake_rl/analysis/` 生成（M5 已冻结的 CI 带画法不改） |
 | CUDA 检查 | W8/W9 `check_cuda()` | — | M0 已有 `scripts/check_env.py`，不替换 |

@@ -44,13 +44,19 @@ CLI::
                                       [--title T] [--ylabel TEXT]
     python -m snake_rl.analysis.plots --values --exp DIR[=LABEL] ... --out FILE.png [--title T] [--ylabel TEXT]
                                       [--start]
+    python -m snake_rl.analysis.plots --causes --exp DIR[=LABEL] ... --out FILE.png [--title T] [--ylabel TEXT]
 
 e.g. ``--exp "runs/tabular_q_W10=tabular Q" "runs/dqn_A_W10=DQN" --baseline
 "runs/baselines/bfs_W10_relative.json=BFS greedy" --out
 runs/figures/part_c_W10.png``. Without ``=LABEL`` the label is the directory
 name (experiments) or the file stem (baselines). ``--values`` draws the value
 figure (``--start``: the first state of each episode instead of all visited
-states; no ``--baseline``).
+states; no ``--baseline``). ``--causes`` draws the death-cause figure (M8):
+one panel per experiment with the fraction of evaluation episodes that
+ended by wall / self / starvation (and win, when it happens) over
+training, seed means with t bands (``aggregate.death_cause_curve``); how
+an agent dies moves from "anywhere" to "trapped by its own body" as it
+learns, and a reward that invites looping shows up as starvation.
 """
 
 from __future__ import annotations
@@ -67,7 +73,7 @@ from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter
 from matplotlib.transforms import offset_copy
 
-from snake_rl.analysis.aggregate import learning_curve, summarise_baseline, value_curve
+from snake_rl.analysis.aggregate import death_cause_curve, learning_curve, summarise_baseline, value_curve
 from snake_rl.utils import REPO_ROOT
 
 #: Categorical colours of the learner series, in fixed slot order
@@ -92,6 +98,10 @@ MAX_DIRECT_LABELS = 4
 
 DEFAULT_YLABEL = "mean score (100 greedy episodes)"
 DEFAULT_VALUE_YLABEL = "discounted return (greedy evaluation)"
+DEFAULT_CAUSE_YLABEL = "fraction of evaluation episodes"
+#: Colours of the death-cause figure (M8), one per cause.
+CAUSE_COLORS = {"wall": "#2a78d6", "self": "#eb6834", "starve": "#1baf7a", "win": "#eda100"}
+CAUSE_ORDER = ("wall", "self", "starve", "win")
 #: Figures are regenerable from the logs: this file may be overwritten.
 DEFAULT_OUT = REPO_ROOT / "runs" / "figures" / "learning_curves.png"
 
@@ -101,6 +111,8 @@ GID_SERIES, GID_BAND, GID_BASELINE = "series", "band", "baseline"
 #: The value figure: ``value:<i>`` / ``value_band:<i>`` (the estimate, solid)
 #: and ``return:<i>`` / ``return_band:<i>`` (the realised return, dashed).
 GID_VALUE, GID_VALUE_BAND, GID_RETURN, GID_RETURN_BAND = "value", "value_band", "return", "return_band"
+#: The death-cause figure: ``cause:<i>:<name>`` / ``cause_band:<i>:<name>``.
+GID_CAUSE, GID_CAUSE_BAND = "cause", "cause_band"
 
 
 def _format_steps(value: float, _pos: int | None = None) -> str:
@@ -434,6 +446,92 @@ def plot_value_curves(
     return _save_png(fig, out)
 
 
+def death_cause_figure(
+    experiments: Sequence[tuple[str, str | Path]],
+    title: str | None = None,
+    ylabel: str = DEFAULT_CAUSE_YLABEL,
+) -> Figure:
+    """The death-cause figure (M8), not saved: one panel per experiment, in
+    the order given, each with a line per cause (wall / self / starve, and
+    win when it ever happens) and its seed-level t band (``n_seeds > 1``).
+
+    Artists carry a gid: ``cause:<i>:<name>`` (the line of cause ``name`` in
+    experiment i) and ``cause_band:<i>:<name>`` (its interval).
+    """
+    experiments = [(str(label), Path(d)) for label, d in experiments]
+    if not experiments:
+        raise ValueError("at least one experiment is needed")
+    labels = [label for label, _ in experiments]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"labels must be unique within one figure, got {labels}")
+    curves = [(label, d, death_cause_curve(d)) for label, d in experiments]
+    for _, d, curve in curves:
+        if curve.empty:
+            raise ValueError(f"{d}: no evaluation step is common to all finished runs")
+
+    n = len(curves)
+    fig = Figure(figsize=(max(FIGSIZE[0], 3.3 * n + 0.8), FIGSIZE[1]), dpi=DPI, facecolor=SURFACE, layout="constrained")
+    FigureCanvasAgg(fig)
+    axes = fig.subplots(1, n, sharey=True, squeeze=False)[0]
+    drawn: list[str] = []
+    band_seeds: set[int] = set()
+    for i, (ax, (label, _, curve)) in enumerate(zip(axes, curves)):
+        ax.set_facecolor(SURFACE)
+        x = curve["env_steps"].to_numpy(dtype=np.float64)
+        for name in CAUSE_ORDER:
+            mean = curve[f"{name}_mean"].to_numpy(dtype=np.float64)
+            if name == "win" and not np.any(mean != 0.0):
+                continue
+            half = curve[f"{name}_ci95"].to_numpy(dtype=np.float64)
+            if np.isfinite(half).all():
+                band = ax.fill_between(
+                    x, mean - half, mean + half, facecolor=CAUSE_COLORS[name], edgecolor="none", linewidth=0.0,
+                    alpha=BAND_ALPHA, zorder=2,
+                )
+                band.set_gid(f"{GID_CAUSE_BAND}:{i}:{name}")
+                band_seeds.add(int(curve["n_seeds"].iloc[0]))
+            (line,) = ax.plot(
+                x, mean, color=CAUSE_COLORS[name], linewidth=LINE_WIDTH, solid_capstyle="round",
+                solid_joinstyle="round", zorder=4, label=name,
+            )
+            line.set_gid(f"{GID_CAUSE}:{i}:{name}")
+            if name not in drawn:
+                drawn.append(name)
+        pad = 0.012 * (float(x[-1]) - float(x[0])) if len(x) > 1 and x[-1] > x[0] else 1.0
+        ax.set_xlim(float(x[0]) - pad, float(x[-1]) + pad)
+        ax.set_ylim(0.0, 1.0)
+        _style_axes(fig, ax, ylabel if i == 0 else "", None)
+        ax.set_title(label, loc="left", fontsize=FONT_SIZE + 1, color=INK)
+    handles: list[Line2D | Patch] = [
+        Line2D([], [], color=CAUSE_COLORS[name], linewidth=LINE_WIDTH, label=name) for name in CAUSE_ORDER
+        if name in drawn
+    ]
+    if band_seeds:
+        handles.append(_band_handle(band_seeds))
+    fig.legend(
+        handles=handles, loc="outside lower center", frameon=False, ncols=len(handles), fontsize=FONT_SIZE,
+        labelcolor=INK, handlelength=2.2, columnspacing=1.4,
+    )
+    if title is not None:
+        fig.suptitle(title, x=0.015, ha="left", fontsize=FONT_SIZE + 2, color=INK)
+    return fig
+
+
+def plot_death_causes(
+    experiments: Sequence[tuple[str, str | Path]],
+    out: str | Path,
+    title: str | None = None,
+    ylabel: str = DEFAULT_CAUSE_YLABEL,
+) -> Path:
+    """Draw :func:`death_cause_figure` of ``experiments`` (``(label,
+    experiment directory)`` pairs) and save it as a PNG (parents created,
+    overwritten). Returns the path written."""
+    out = Path(out)
+    if out.suffix.lower() != ".png":
+        raise ValueError(f"out must be a .png file, got {out}")
+    return _save_png(death_cause_figure(experiments, title=title, ylabel=ylabel), out)
+
+
 def _save_png(fig: Figure, out: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, format="png", dpi=DPI)
@@ -472,7 +570,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                    help="the value figure: max-Q estimate (solid) against realised return (dashed) per experiment")
     p.add_argument("--start", action="store_true",
                    help="with --values: the first state of each episode instead of all visited states")
+    p.add_argument("--causes", action="store_true",
+                   help="the death-cause figure: per experiment, the fraction of evaluation episodes ending by "
+                        "wall / self / starvation over training")
     args = p.parse_args(argv)
+    if args.causes and (args.values or args.start or args.baseline):
+        p.error("the death-cause figure (--causes) takes neither --values, --start nor --baseline")
     if not args.exp:
         p.error("nothing to plot: give at least one --exp DIR[=LABEL]")
     if args.start and not args.values:
@@ -490,6 +593,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if any(not label for label, _ in experiments + baselines):
         p.error("empty label: write DIR=LABEL with a non-empty LABEL, or DIR alone")
 
+    if args.causes:
+        ylabel = args.ylabel if args.ylabel is not None else DEFAULT_CAUSE_YLABEL
+        print(plot_death_causes(experiments, out=args.out, title=args.title, ylabel=ylabel))
+        return 0
     if args.values:
         ylabel = args.ylabel if args.ylabel is not None else DEFAULT_VALUE_YLABEL
         which = "start" if args.start else "visited"

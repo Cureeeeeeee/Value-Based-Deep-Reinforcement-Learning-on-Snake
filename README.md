@@ -62,7 +62,10 @@ snake_rl/
                  with gamma also the value estimate against the realised return (overestimation)
   utils.py       git hash and other reproducibility helpers
   analysis/      aggregate.py (results table, learning curves and value curves from run directories),
-                 plots.py (evaluation-curve figure; --values: max-Q estimate vs realised return)
+                 plots.py (evaluation-curve figure; --values: max-Q estimate vs realised return;
+                 --causes: how evaluation episodes end over training),
+                 behaviour.py (visit heat-maps, loop / reward-hacking statistics, last-steps
+                 figures and GUI recordings of hacking cases, from a checkpoint)
   gui/app.py     pygame: human play (optionally with an advising agent) / agent play with the
                  live action-value panel / replay of recorded episodes; headless screenshots
 tests/           pytest; the scalar-vs-vectorised equivalence test is the regression gate
@@ -156,6 +159,27 @@ python -m snake_rl.analysis.plots --values --exp "runs/dqn_B8_W8=DQN" "runs/dqn_
 The refinements are switches of the shipped configs: `--set agent.double=true`
 (Double DQN target), `agent.dueling=true` (Dueling head), `agent.per=true`
 (prioritised replay), each with its own `--exp`.
+
+The reward axis is a switch too: `--set env.reward.variant=R1` (step penalty),
+`R2 env.reward.gamma=<agent gamma>` (potential-based shaping), `R3` (naive
+distance shaping, asymmetric: closer +0.01, farther 0; `env.reward.farther=-0.01`
+is the symmetric Part-B version); `env.starve_limit=1000` lengthens the
+starvation limit to let a looping policy show itself. Behaviour analysis of any
+player (baseline, run directory with `--checkpoint early|mid|late|final|<steps>`,
+checkpoint file), and of all seeds of an experiment:
+
+```powershell
+python -m snake_rl.analysis.plots --causes --exp "runs/dqn_B8_W8=R0" "runs/dqn_B8_W8_R3=R3" --out runs/figures/m8_W8_causes.png
+python -m snake_rl.analysis.behaviour --player runs/dqn_B8_W8/0 --checkpoint late --out-dir runs/behaviour/dqn_B8_W8_0_late
+python -m snake_rl.analysis.behaviour --exp runs/dqn_B8_W8_R3 --checkpoint final --out-dir runs/behaviour/dqn_B8_W8_R3
+python -m snake_rl.analysis.behaviour --player bfs --config configs/dqn_B_8x8.yaml --out-dir runs/behaviour/bfs_W8
+```
+
+Each output directory holds `episodes.csv` (per episode: score, steps, cause, steps
+since the last food, loop period and length, shaping reward collected, border
+share), `heatmap.png` / `.npy`, `last_steps.png`, `summary.json` and
+`hack_<rank>_<seed>.json` recordings of the longest loops, which the GUI replays
+(`python -m snake_rl.gui.app --replay FILE`).
 
 Results on the 11-feature observation (5 seeds, 100 greedy episodes each on the
 baselines' boards; last evaluation):

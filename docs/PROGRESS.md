@@ -4,7 +4,29 @@
 
 ## 当前里程碑
 
-**M7 完成（代码 2026-10-20，9 个 Double / Dueling / PER 批次 2026-10-21 02:11 跑完，结果在"M7 验收"）→ 下一个是 M8（奖励轴 R0–R3 + 行为分析），开工前读"待拍板"里标（M8）和（M6→M8/M10）的行：B 的主线 γ、`grad_steps_per_vec_step`、PER 的 IS 权重**。M6：全部完成（2026-10-20；代码 `d81a7f3`，8×8 结果经独立审查，10×10 结果见"M6 验收"的 10×10 段）。M0–M2 完成于 2026-09-30，M3、M4 于 2026-10-04，M5 和 Part C 文档于 2026-10-05，M9（GUI）和 Part D 文档于 2026-10-12（M9 提前到 M6 之前做，原因见"偏离 Part B 的记录"），M6 于 2026-10-20。M6 的 10×10 批次已由队列脚本跑完（2026-10-20 20:53–23:42，9 条、45 个 run，退出码全 0，git `7b65648`）。被内存不足中断的那一批仍在 `runs/_interrupted/dqn_B8_W10_killed_857k_2026-10-20/`，不要动。
+**M8：代码完成（2026-10-21，分支 `m8` 合并进 main；行为分析模块 `analysis/behaviour.py`、死因演变图 `plots --causes`），奖励轴的 16 个批次等用户启动 → 跑完填"M8 验收"（奖励轴表、死因演变图、热力图、hacking 案例）→ M10**。M7 完成（代码 2026-10-20，批次与结果 2026-10-21 凌晨，"M7 验收"）。**用户要做的（M8 批次，8×8，5 种子一条；按上次的办法在 bypass 模式的窗口启动队列脚本，脱离会话跑）**：队列脚本 `m8_queue.sh`（会话临时目录，与 `batch_queue.sh` 同机制：串行、一次一个 5 进程批次、开跑前等空闲内存 ≥ 7 GB；日志 `queue_logs/m8_queue.log`），内容是下面 16 条，A 的 8 条各约 5 分钟（CPU），B8 的 8 条各 25–35 分钟（GPU），总计约 4.5 小时：
+
+```powershell
+.venv\Scripts\activate
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_gamma099_R1 --set agent.gamma=0.99 env.reward.variant=R1
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_gamma099_R2 --set agent.gamma=0.99 env.reward.variant=R2 env.reward.gamma=0.99
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_gamma099_R3 --set agent.gamma=0.99 env.reward.variant=R3
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_gamma099_R3sym --set agent.gamma=0.99 env.reward.variant=R3 env.reward.farther=-0.01
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_gamma099_R3_H1000 --set agent.gamma=0.99 env.reward.variant=R3 env.starve_limit=1000
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_R1 --set env.reward.variant=R1
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_R2 --set env.reward.variant=R2 env.reward.gamma=0.9
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_R3 --set env.reward.variant=R3
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_gamma099_R1 --set agent.gamma=0.99 env.reward.variant=R1
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_gamma099_R2 --set agent.gamma=0.99 env.reward.variant=R2 env.reward.gamma=0.99
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_gamma099_R3 --set agent.gamma=0.99 env.reward.variant=R3
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_gamma099_R3sym --set agent.gamma=0.99 env.reward.variant=R3 env.reward.farther=-0.01
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_gamma099_R3_H1000 --set agent.gamma=0.99 env.reward.variant=R3 env.starve_limit=1000
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_R1 --set env.reward.variant=R1
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_R2 --set env.reward.variant=R2 env.reward.gamma=0.9
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_R3 --set env.reward.variant=R3
+```
+
+R0 的对照已有：`dqn_A_W8` / `dqn_A_W8_gamma099` / `dqn_B8_W8` / `dqn_B8_W8_gamma099`。跑完后：`python -m snake_rl.analysis.aggregate --last-k 5 --exp ...`（得分表，所有变体都按吃到的食物计分）；`python -m snake_rl.analysis.plots --causes --exp runs/dqn_B8_W8_gamma099=R0 runs/dqn_B8_W8_gamma099_R1=R1 ... --out runs/figures/m8_W8_causes_B8_gamma099.png`（死因演变）；`python -m snake_rl.analysis.behaviour --exp runs/<exp> --checkpoint final --out-dir runs/behaviour/<exp>`（每个变体：热力图、`episodes.csv`、`summary.json`、hacking 录像；R0 的 B8 再按 `--checkpoint early|mid|late` 各出一份看演变）；`_R3_H1000` 的 `hack_*.json` 用 `python -m snake_rl.gui.app --replay FILE` 回放。M6：全部完成（2026-10-20；代码 `d81a7f3`，8×8 结果经独立审查，10×10 结果见"M6 验收"的 10×10 段）。M0–M2 完成于 2026-09-30，M3、M4 于 2026-10-04，M5 和 Part C 文档于 2026-10-05，M9（GUI）和 Part D 文档于 2026-10-12（M9 提前到 M6 之前做，原因见"偏离 Part B 的记录"），M6 于 2026-10-20。M6 的 10×10 批次已由队列脚本跑完（2026-10-20 20:53–23:42，9 条、45 个 run，退出码全 0，git `7b65648`）。被内存不足中断的那一批仍在 `runs/_interrupted/dqn_B8_W10_killed_857k_2026-10-20/`，不要动。
 
 M7 的 9 条 8×8 批次也已由同一队列跑完（2026-10-20 23:42 – 2026-10-21 02:11；`runs/dqn_{A,B8}_W8_{double,dueling,per}`、`dqn_A_W8_gamma099_double`、`dqn_B8_W8_gamma099{,_double}`，git `7b65648` / `799eb8e` / `3b7d8c2`，三者代码相同、只差文档）。分析脚本在会话临时目录：`m7_analysis.py REF=EXP ...`（得分与高估的配对差）、`m7_values.py`；表 `runs/tables/m7_W8_variants.md`，图 `runs/figures/m7_W8_*`。
 
@@ -22,7 +44,7 @@ M7 的 9 条 8×8 批次也已由同一队列跑完（2026-10-20 23:42 – 2026-
 | M5 | DQN 核心（MLP on A）+ 评估协议 + 日志/checkpoint | ✅ 2026-10-05 | `pytest`：1237 passed，约 55 s。验收达成：DQN-A 在 8×8 上 16.11 ± 0.88（表格 Q 15.67 ± 0.87，分不出高下），在 10×10 上 20.29 ± 1.55（表格 Q 18.51 ± 1.10，DQN 更高）；首条评估曲线 `runs/figures/m5_W10_curve.png`、`m5_W8_curve.png`。表：`runs/tables/m5_W10_all.md`、`m5_W8_all.md`；run：`runs/dqn_A_W10/`、`runs/dqn_A_W8/`（git `0b4666c`）。**解读上的重要限定见下方“M5 验收”**。→ Part C 可交 |
 | M6 | CNN on B（8 平面 / 3 平面）；±replay ±target 消融 | ✅ 2026-10-20（代码 `d81a7f3`；8×8 与 10×10 的全部批次） | 代码：`networks.CNN`（按 resource 的 `CustomCNN` 改）、`agent.replay` 开关、`aborted.json`、`scripts/bench_update.py`、3 个 B 配置；全量 1399 项测试通过。验收（8×8，5 种子，经独立审查复算）：B8 比 A 高 +1.71 [+1.26, +2.15]（配对）；年龄平面 \|作用\| < 1 分，方向平面 −4.3；去掉目标网络略好（最后 10 次 +0.47 [+0.17, +0.78]）；去掉回放 −9.3，拆成目标网络过时、无混合、更新次数三个都可测的因素（拆分依赖路径）。四条消融曲线和观测轴曲线在 `runs/figures/m6_W8_*.png`。10×10（5 种子，9 个批次，git `7b65648`）：B8 对 A 分不出高下（+0.40 [−0.83, +1.64]，8×8 的 +1.7 没有了）；B7（无年龄平面）高于 B8 +1.15 [+0.30, +2.00]；B3 −4.6；去掉目标网络 +0.3 不显著；**每 vec-step 1 次更新、目标周期配平的 `G1_t31` 23.03 ± 1.11，高于主配置 +2.34 [+1.07, +3.60]，只用 1/32 的更新**；目标周期配平后无回放与 B8 持平；A 的中段下跌在无回放、无目标网络的 run 里一样出现，buffer 假说被否定。详见"M6 验收"的 10×10 段 |
 | M7 | Double DQN + 过估计测量；Dueling；PER | ✅ 2026-10-21（代码 `37a9dfd` 2026-10-20；9 个批次与结果 2026-10-21 凌晨） | 代码：过估计测量（`evaluate(..., gamma)`，每次评估 4 列 `eval_value_* / eval_return_*`，`scripts/backfill_values.py` 给旧 run 补算，`aggregate.value_curve`，`plots --values`）、`networks.DuelingMLP`、`replay.PrioritizedReplayBuffer`、`agent.update(batch, weights)`；配置开关 `agent.dueling / per`。验收"过估计曲线出图"已用回填的 6 个实验完成：`runs/figures/m7_W8_values_*.png`、`m7_W10_values_dqn.png`——DQN 沿访问状态高估 0.25（A）/ 0.30（B8），γ=0.99 下 +6.1（2.1 倍）且到 512k 步仍在涨；首状态反而低估（A）。批次结果（8×8，5 种子，配对）：Double DQN 对高估的作用只在 γ=0.99 的 CNN 上明确（访问状态 +2.53 → +1.66，首状态到无偏），γ=0.9 下 ≤ 0.03；对得分没有一致方向（A γ=0.9 +0.7–1.1、A γ=0.99 +0.5（最后 10 / 20 次口径）、B8 γ=0.9 零、B8 γ=0.99 最后 20 次 −0.9 且在缩小）。Dueling：得分不变，B8 高估 −0.08（5/5）。PER：得分不变或略低，IS 权重按 buffer 最小优先级归一化把加权损失压掉三个数量级（Adam 下实际步长只小 1.4–1.5 倍）。**意外的主结果：CNN on B8 在 γ=0.99 下 22.72 ± 1.04，比 γ=0.9 高 +4.91 [+3.48, +6.34]，与 BFS 分不开（逐局配对 −0.35 [−1.39, +0.70]），全是存活时间的作用（每 100 步吃的食物少 24%，局长 +68%）；A 上同样的改动 −0.2**。详见"M7 验收" |
-| M8 | 奖励轴 R0–R3 + 行为分析 | ☐ | |
+| M8 | 奖励轴 R0–R3 + 行为分析 | ✅ 代码 2026-10-21（分支 `m8`）；🔶 16 个奖励轴批次等用户启动 | 代码：`analysis/behaviour.py`（标量环境 rollout 记录每步的头 / 朝向 / 食物 / 动作 / 奖励 / Q 值；访问热力图与贴边比例；尾段循环统计（周期、周期后缀长度、塑形奖励）与 hacking 候选；临死轨迹图；checkpoint 别名 early / mid / late / final；GUI 兼容的录像导出；CLI 单 run 与整实验两种模式）、`aggregate.death_cause_curve`、`plots --causes`（死因随训练演变）。64 项 M8 测试由独立 agent 按 `M8_SPEC.md` 编写，全量 1716 项通过。奖励轴批次（R1 / R2 / R3 / 对称 R3 / R3+H=1000 的 hacking 探针，A 与 B8，γ=0.9 与 0.99）命令见"当前里程碑" |
 | M9 | pygame GUI 三模式 | ✅ 2026-10-12 | `pytest`：1293 passed（+56，`tests/test_gui.py`，无头 SDL dummy 驱动，4 s）。验收达成：人玩（方向键 / WASD；默认逐步、Space 实时；可挂"顾问"agent 显示其 Q 值）+ agent 玩（基线 / Q 表 / 任意 DQN checkpoint；实时三动作 Q 值条形图与所选动作、观测 A 的 11 位、分数 / 饥饿计数 / 回报 / 本会话死因统计）+ 回放（JSON 录像 = 环境配置 + 种子 + 动作序列 + 每步 Q 值，重新模拟）。真实窗口冒烟通过。截图：`python scripts/gui_screenshots.py` → `runs/figures/partD_gui_*.png`。→ Part D 已交付。详见下方"M9 实现层面的决定" |
 | M10 | 矩阵批量（5 种子）、`analysis/` 全部图表、Colab notebook | ☐ | → Part E |
 
@@ -563,6 +585,39 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | 新字段写进 4 个批次配置 | `dueling / per / per_alpha / per_beta_start / per_eps` | 配置文件"写出全部字段"的约定 |
 | 开发在 worktree | 分支 `m7` 在 `../snake-rl-m7` 开发，main 保持干净，合并时核对没有训练进程在跑 | 用户随时启动的批次不会记成 `+dirty` |
 
+## M8 验收（2026-10-21 起；代码完成，奖励轴批次等用户启动）
+
+**做了什么（代码；分支 `m8`，与实现独立编写的测试见"测试有效性"）**：
+
+- **行为分析模块** `snake_rl/analysis/behaviour.py`（L3，resource 无对应）：`rollout` 在标量环境上按评估协议（同样的 `reset(seed=10000+i)`、`policy.reset()`、`policy.act(obs, env)`）玩一局并记录每个状态的头位置、朝向、食物、得分和每步的动作、奖励、Q 值（有 `q_values` 的策略），`rollouts` 的得分 / 步数 / 长度 / 死因与 `evaluate` 逐局相同（测试锁定）。`Trajectory.to_recording()` 导出 GUI 的 `Recording`（环境 + 种子 + 动作序列 + 每步 Q 值），任何一局都能在 GUI 里回放。
+- **访问热力图** `visit_heatmap`（头位置在 W×W 格上的分布，含初始状态）、`border_fraction`（外圈一圈的质量：贴边还是穿中）、`heatmap_figure`（同一色标的多面板 + 色条）。
+- **循环 / hacking 统计** `loop_stats`：取最后一次吃食之后的"尾段"状态序列（行、列、朝向），求末尾最小周期 `period` 和最长周期后缀的长度 `loop_steps`；`shaping_reward` = 总奖励 − 食物 − 死亡惩罚（R3 下来回横跳每两步 +0.01）；`hacking_candidates` = 周期后缀 ≥ 20 个状态的局，按长度排序，写成 `hack_<rank>_<seed>.json` 录像。撞墙 / 撞己后头不动，所以碰撞局末尾有 `period 1, loop_steps 2` 的签名，阈值 20 把它排除。
+- **临死轨迹图** `last_steps_figure`：局末的身体（头深色）+ 最后 k 个头位置的折线 + 食物。
+- **死因随训练演变** `aggregate.death_cause_curve`（每次评估的 `eval_frac_wall/self/starve/win` 跨种子均值与 t 区间，行与 `learning_curve` 相同）+ `plots --causes`（每个实验一个面板，三条线 + 区间带，win 只在出现过时画）。
+- **CLI** `python -m snake_rl.analysis.behaviour --player SPEC | --exp DIR [--checkpoint early|mid|late|final|STEP] [--config FILE] --out-dir DIR ...`：写 `episodes.csv`、`heatmap.npy/.png`、`last_steps.png`（只画碰撞死的局）、`hack_*.json`、`summary.json`；`--exp` 模式逐种子分析并加种子均值热力图与带 t 区间的汇总。
+- 奖励轴不需要新训练代码：`env.reward.variant`、`env.reward.gamma`（R2）、`env.reward.farther`（对称 R3）、`env.starve_limit`（hacking 探针）都是 M1/M4 的配置键。
+
+**已有 run 上的死因演变（冒烟，8×8，5 种子；`plots --causes`，图在会话临时目录 `m8_smoke/causes.png`，正式图等批次跑完一起出）**：A（MLP）从第一次评估起就是撞己 80% / 撞墙 20%，之后不变；B8（CNN）前 60k 步饿死与撞墙各半，100k 步后撞己 ≥ 95%；B8 无回放（目标网络过时）前 300k 步 90% 以上饿死，之后饿死与撞己各半；B8 γ=0.99 与 B8 相同，撞己 95%。`[COMPUTED，从图上读]` 这正是设计依据里说的"从到处撞墙到主要死于把自己围死"的迁移——不过在这个环境里"到处撞墙"只占前几万步，CNN 早期的主要死法是饿死（还不会找食物）。
+
+**奖励轴批次：等用户启动（16 条，命令见"当前里程碑"）**。设计：R1 / R2 / R3 各在 A 与 B8、γ=0.9（主线）与 γ=0.99（待拍板行里 hacking 分析要求的 γ：R3 非对称下绕圈的 bootstrap 价值 ≈ 0.5，R1 下每步 −0.01 的折现和 = 1 = 死亡惩罚，"自杀求解脱"只在这里有可能）；两个 hacking 探针只在 γ=0.99：对称 R3（Part B 原版，理论上 ≈ 势函数塑形，不该 hacking）和 R3 + `starve_limit=1000`（把饥饿上限放宽 10 倍，让绕圈能持续；评估必须终止，所以不是"无截断"）。跑完填：奖励轴得分表（都按吃到的食物计分）、死因演变图（R0–R3 四面板）、每个变体最终 checkpoint 的热力图与 `summary.json`（`loop_fraction`、`shaping_reward_mean`、`frac_starve`）、hacking 录像。
+
+**测试有效性**：`tests/test_m8_*.py`（64 项：死因曲线与图 18、行为模块 40、CLI 6）由独立 agent 按 `M8_SPEC.md`（会话临时目录）编写，与实现同时进行。集成：3 项不过，全是同一处——规格写 `final_cells` 头在前并声称 `snake_cells()` 是头→尾，实际 `core.py` 的 `snake_cells()` 返回尾→头，实现照搬了它；按规格改实现（反转）后 64 项全过，临死轨迹图的头颜色也因此才正确。测试 agent 报告的规格歧义都按合理默认处理（GUI 的回放类叫 `RecordedPlayer`，规格里写成了 `ReplayPlayer`；`--checkpoint final` 对基线可接受；`border_fraction` 不重新归一化）。关键事实（左转策略在空棋盘上周期 4、`loop_steps = H+1`；撞墙后头不动）由测试 agent 先在真实 `SnakeEnv` 上验证再写断言，循环统计另有独立参照实现交叉核对。全量 1716 项（M7 后 1652）。
+
+## M8 实现层面的决定
+
+| 决定 | 做法 | 理由 |
+|---|---|---|
+| rollout 用标量环境 | `SnakeEnv` 逐步，不用向量化环境 | 100 局 × ≤ 200 步在 CPU 上几秒；标量环境是答辩用的参考实现，行为分析的每一步都能对照 `core.py` 讲；与 `evaluate` 逐局相同由测试锁定 |
+| 循环的定义 | 尾段（最后一次吃食之后）的 (行, 列, 朝向) 序列在末尾的最小周期；`loop_steps` 是最长周期后缀的状态数 | 只看尾段：吃到食物就不是在刷分；用朝向而不只用位置：相对动作下同一格不同朝向是不同状态 |
+| hacking 候选阈值 20 个状态 | `MIN_LOOP_STEPS = 20`，可调 | 碰撞局末尾天然有 2 个重复状态（头不动）；一个 2×2 的转圈周期 4，20 个状态 = 5 圈，足够排除偶然 |
+| 热力图计 T+1 个状态 | 含初始状态 | 初始状态是棋盘中央、每局一次，对 100 局的分布影响 < 1%；定义简单 |
+| hacking 探针用 H=1000 而不是"无截断" | `env.starve_limit=1000` | 评估协议要求每局终止；1000 步的绕圈局本身就是证据，`tail_without_food` 会显示 1000 |
+| checkpoint 别名 | early / mid / late = 最接近最后一个 checkpoint 步数的 10 / 50 / 100 %，final = `model.pt` | 与 Part B 的"早 / 中 / 晚三段录像"对应 |
+| 录像格式 | 直接复用 GUI 的 `Recording`（环境 + 种子 + 动作 + Q 值） | 演示时 `--replay` 即可放 hacking 案例，不另造格式 |
+| 奖励轴的 γ | 主线 γ=0.9 与 γ=0.99 都跑 R1–R3（A 与 B8 各 3 条）；探针只跑 γ=0.99 | 待拍板"奖励轴用哪个 γ"的默认是 γ=0.99，但 Part B 的奖励轴是主线实验，两个都要 |
+| R2 的 `env.reward.gamma` | 维持"必须显式等于 agent 的 γ"，命令里写明，不引入 `null` 跟随语义 | 改语义要先改 PLAN §3.5；显式写不会错 |
+| `final_cells` 的顺序 | 头在前（`reversed(env.snake_cells())`） | `snake_cells()` 返回尾→头（`cells_from_body_age` 的顺序），规格按"头在前"写、测试也按它断言；临死轨迹图把第 0 个格画成头 |
+
 ## 待拍板（默认值已按此实现或将按此实现；未收到反对即视为定案）
 
 | 项 | 默认 | 理由 |
@@ -585,8 +640,8 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | （M5）结果表报"最后一次快照"还是"最后 k 次评估的平均" | 主表保持 Part B 协议（最后一次快照，跨种子 CI）；另给一列最后 5 次评估的平均。需要在 `aggregate.py` 加 `--last-k` 和测试 | 最后一次快照的跨种子区间主要是快照抖动：要相差约 1.3 分才分得开两行，按最后 5 次平均只要约 0.34。"DQN-A ≈ 表格 Q"应按后者判断 |
 | （M5 之后）观测 A 的表示上界 | 把 `runs/review/m4/verify-results/vsearch.py` 整理成 `scripts/policy_search_A.py`（256×3 策略上的爬山、留出棋盘评估、写 run 目录），约 80 行、几分钟计算 | 这是"学习方法的极限 vs 表示的极限"的直接证据，对比研究里很有分量。没有它，报告里只能说"初步结果" |
 | （M5）训练日志里的截断计数 | DQN 的 `metrics.csv` 加一列"本窗口内被饥饿截断的训练局数" | 截断规则有没有被触发现在只能靠重跑来数；表格 Q 的两行里几乎没触发 |
-| （M8）奖励轴用哪个 γ | R3 hacking 的对比在 **γ=0.99** 下做，并在报告里写明 | PLAN §3.5 里"无限循环价值 ≈ 0.5"和"对称 R3 与势函数形式只差 ~1e-4/步"都是按 γ=0.99 算的。γ=0.9 时非对称 R3 绕圈只值约 0.05（一个食物 +1），R1 绕圈 −0.10（死亡 −1.01），而且 bootstrap 与"在饥饿上限处截成终止"给出的绕圈价值相同到 4 位小数——在 γ=0.9 下既看不到 R3 hacking，也看不到 R1 的"自杀求解脱" |
-| R2 的 `env.reward.gamma` | 现状：必须显式设成 agent 的 γ（棋盘配置里 agent 是 0.9，`RewardConfig` 默认 0.99；忘了设会在加载时报错）。M8 再决定是否让 `null` 表示"跟随 agent" | 改语义要先改 PLAN §3.5 |
+| （M8）奖励轴用哪个 γ | **已按此排批次（2026-10-21）**：hacking 探针（对称 R3、R3+H=1000）只在 γ=0.99；R1 / R2 / R3 本身在 γ=0.9 和 0.99 都跑（A 与 B8），命令见"当前里程碑" | PLAN §3.5 里"无限循环价值 ≈ 0.5"和"对称 R3 与势函数形式只差 ~1e-4/步"都是按 γ=0.99 算的。γ=0.9 时非对称 R3 绕圈只值约 0.05（一个食物 +1），R1 绕圈 −0.10（死亡 −1.01），而且 bootstrap 与"在饥饿上限处截成终止"给出的绕圈价值相同到 4 位小数——在 γ=0.9 下既看不到 R3 hacking，也看不到 R1 的"自杀求解脱" |
+| R2 的 `env.reward.gamma` | **定案（M8）**：维持必须显式设成 agent 的 γ（忘了设在加载时报错），不引入 `null` 跟随语义；M8 的命令里 `env.reward.gamma=0.9 / 0.99` 与 `agent.gamma` 一起写 | 改语义要先改 PLAN §3.5；显式写不会错 |
 | （M6）消融要在哪个观测上做 | **已按此做（2026-10-20）**：±replay、±target 在观测 A **和** B 上都做；主结论以 B 为准。A 上的结果见"M6 验收"（去掉回放低约 0.5 分，目标网络无作用） | M5 实测：在 A 上去掉目标网络没有差别，γ=0 的表格就到平台，梯度裁剪和 Huber 线性区都不起作用。在 A 上做消融大概率得到零结果，本身是一个可报告的发现，但看不出这些组件的作用。**Part B 的后备方案（“CNN 不收敛就以 A 为主线做全部奖励和消融实验”）因此很弱**：A 上的消融预期是零结果 |
 | （M6）“无 replay”怎么定义 | **已实现（`agent.replay: false`，2026-10-20）**：每个 vec-step 用这一步自己的 `n_envs` 条转移做 1 次梯度更新，每条只用一次；`grad_steps_per_vec_step` 必须是 null 或 1；报告里写明每条转移的梯度步数从 64 变成 1 | 用 `buffer_size = batch_size = n_envs` 来模拟是不对的：采样是有放回的，一个 batch 平均只含 81 条不同的转移（63%），而且每步还要抽 32 个这样的 batch。校验 `buffer_size ≥ n_envs` 已加 |
 | （M6）“发散”怎么判定 | **`aborted.json` 已实现（2026-10-20）**，`aggregate` 把中止的种子分开警告并在表的 seeds 列标出；指标判定仍在 `metrics.csv` 上做：`mean_q` 相对可达回报的倍数、贪心得分、饿死比例 | NaN 中止在 lr 2.5e-4 下不可能触发，所以不能用它来判定消融里的发散；中止的种子以前会从表里静默消失（幸存者偏差） |
@@ -653,3 +708,4 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 - 2026-10-21（凌晨）：10×10 段经独立审查（`runs/review/m6_w10/`）：数字全部一致，三处小错和七处解读已改。M7 的 A 批次（`_double`、`_gamma099_double`、`_dueling`、`_per`）跑完并分析（`m7_analysis.py`，草稿 `m7_double_draft.md`，都在会话临时目录；等 B 的五条跑完一起填"M7 验收"）；用现在的代码按 `dqn_A_W8/0` 的配置重跑种子 0，评估曲线与 M5 逐位相同，A 上的 M7 对比不含代码版本成分。
 - 2026-10-21（凌晨，M7 批次）：队列的 9 条 M7 批次 02:11 跑完（A 的 4 条各 4–7 分钟，B 的 5 条 21–30 分钟），每条跑完即分析（`m7_analysis.py`），结果写进"M7 验收"（表 + 7 点），里程碑表 M7 行改为完成，待拍板改三行、加两行（B 的主线 γ；γ=0.99 下估计直线上升的原因）。主要发现：Double DQN 对高估只在 γ=0.99 的 CNN 上明确（−0.87，首状态到无偏），对得分没有一致方向；Dueling、PER 对得分无作用，PER 的 IS 权重归一化把有效步长压掉 2–3 个数量级；**CNN on B8 在 γ=0.99 下 22.7 分（+4.9，到 BFS 水平），A 上 −0.2**——表示轴最强的证据。M7 的 worktree `../snake-rl-m7`（分支 `m7`）与 main 同步，可删。下一步 M8。
 - 2026-10-21（M7 审查）：M7 批次结果段经独立审查（`runs/review/m7/`）：数字全部一致；推翻了 PER 的机制解释（Adam 抵消尺度，实际步长只小 1.4–1.5 倍）、"估计直线上升"、"到 BFS 水平"、"CNN 能用上长视野"（实为存活时间）等解读，已按审查改正。
+- 2026-10-21（M8 代码）：M8 在 worktree 的分支 `m8` 上做（main 保持干净）。做法同前：写规格（`M8_SPEC.md`，会话临时目录）→ 一个 agent 按规格独立写测试，我同时写实现。新增 `analysis/behaviour.py`、`aggregate.death_cause_curve`、`plots --causes`；64 项 M8 测试，全量 1716 项通过。奖励轴的 16 条批次命令写在"当前里程碑"，队列脚本 `m8_queue.sh` 在会话临时目录，等用户用 bypass 窗口启动。README、PLAN §2、RESOURCE_BASELINE（M8 两行）已更新。

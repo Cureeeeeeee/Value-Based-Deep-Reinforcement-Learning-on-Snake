@@ -56,7 +56,7 @@ snake-rl/
     config.py               # YAML 实验配置：加载、--set 覆盖、校验、种子布局（M4 新增）
     train.py                # 配置驱动；写 run 目录（config、seed、git hash、csv 日志、checkpoint）
     evaluate.py             # 贪心评估协议：100 局、固定评估种子、死因分解；标量版与向量化版（evaluate_batched）逐局相同
-    analysis/               # aggregate.py（从 run 目录生成结果表与学习曲线，跨种子 t 区间）、plots.py
+    analysis/               # aggregate.py（从 run 目录生成结果表与学习曲线，跨种子 t 区间）、plots.py、behaviour.py（M8：热力图 / 循环统计 / 临死轨迹 / hacking 录像）
     gui/app.py              # pygame：人玩 / agent 玩 + Q 值侧栏 / 回放
   configs/                  # 每个实验一份 yaml
   tests/                    # test_env.py test_vec_env.py test_obs.py test_rewards.py test_baselines.py；M4 起另有 test_tabular_q / test_train / test_evaluate_batched / test_aggregate / test_run_matrix 等
