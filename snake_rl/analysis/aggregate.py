@@ -54,6 +54,14 @@ still the unit of replication: averaging k evaluations of one seed reduces
 the checkpoint-to-checkpoint noise inside that seed, it does not create k
 replicates. Baselines have no evaluation curve; their cell is ``n/a``.
 
+Value curve (M7, :func:`value_curve`). For DQN runs the metrics also carry,
+per evaluation, the network's value estimate ``max_a Q`` on the states the
+greedy policy visits and the discounted return it then realises from them
+(``snake_rl.evaluate``); runs trained before M7 get them in ``values.csv``
+from ``scripts/backfill_values.py``. The curve gives, across seeds, the
+estimate, the return and their per-seed difference (the overestimation of
+the Double DQN study), with the same seed-level Student-t intervals.
+
 CLI::
 
     python -m snake_rl.analysis.aggregate [--baseline FILE ...] [--exp DIR ...] [--out FILE.md] [--curves-dir DIR]
@@ -94,6 +102,12 @@ CAUSES = tuple(c for c in CAUSE_NAMES if c != "none")
 
 #: Columns of :func:`learning_curve`.
 CURVE_COLUMNS = ("env_steps", "n_seeds", "mean", "ci95", "min", "max")
+#: ``value_curve`` (M7): value estimate, realised return and their gap across seeds.
+VALUE_CURVE_COLUMNS = (
+    "env_steps", "n_seeds", "value_mean", "value_ci95", "return_mean", "return_ci95", "gap_mean", "gap_ci95",
+)
+#: Value estimates of a run trained before M7, written by ``scripts/backfill_values.py``.
+VALUES_FILE = "values.csv"
 
 #: Two-sided 95 % Student t critical values t(0.975, df) for df = 1 .. 30.
 _T_95 = (
@@ -495,6 +509,78 @@ def learning_curve(exp_dir: str | Path) -> pd.DataFrame:
     seeds, nan for one seed), ``min``, ``max``.
     """
     return _curve_from_runs(load_runs(exp_dir))
+
+
+# -------------------------------------------- value estimates vs returns (M7)
+def _value_series(run: RunResult, which: str) -> pd.DataFrame:
+    """``env_steps``-indexed frame with columns ``value`` and ``return`` of one run.
+
+    From the ``eval_value_<which>`` / ``eval_return_<which>`` columns of
+    ``metrics.csv`` when both are present and complete; otherwise from
+    ``values.csv`` (``scripts/backfill_values.py``); otherwise ``ValueError``.
+    """
+    columns = [f"eval_value_{which}", f"eval_return_{which}"]
+    frame = run.metrics
+    if not (set(columns) <= set(frame.columns) and frame[columns].notna().all().all()):
+        values_path = run.run_dir / VALUES_FILE
+        if not values_path.is_file():
+            raise ValueError(
+                f"{run.run_dir}: no value estimates ({', '.join(columns)} in {METRICS_FILE}, or {VALUES_FILE}): "
+                f"train with the M7 code or run scripts/backfill_values.py on the run's checkpoints"
+            )
+        frame = pd.read_csv(values_path, float_precision="round_trip")
+        missing = {"env_steps", *columns} - set(frame.columns)
+        if missing or frame[columns].isna().any().any():
+            raise ValueError(f"{values_path}: missing column(s) or values {sorted(missing)}")
+    series = frame.set_index("env_steps")[columns]
+    if not series.index.is_unique:
+        raise ValueError(f"{run.run_dir}: duplicate env_steps")
+    return series.rename(columns=dict(zip(columns, ("value", "return"))))
+
+
+def value_curve(exp_dir: str | Path, which: str = "visited") -> pd.DataFrame:
+    """Value estimates against realised returns across seeds (M7), one row per ``env_steps``.
+
+    ``which``: ``"visited"`` (all states the greedy policy visits on the
+    evaluation boards) or ``"start"`` (the first state of each episode).
+    Finished runs only; only ``env_steps`` present in all of them (the same
+    rule and warning as :func:`learning_curve`). Columns
+    (``VALUE_CURVE_COLUMNS``): ``value_mean`` / ``value_ci95`` of the
+    estimate ``max_a Q``, ``return_mean`` / ``return_ci95`` of the realised
+    discounted return, ``gap_mean`` / ``gap_ci95`` of the per-seed difference
+    ``value - return`` (the overestimation); Student-t 95 % half-widths with
+    the seed as the unit, nan for one seed.
+    """
+    if which not in ("visited", "start"):
+        raise ValueError(f'which must be "visited" or "start", got {which!r}')
+    runs = load_runs(exp_dir)
+    series = [_value_series(r, which) for r in runs]
+    step_sets = [set(s.index) for s in series]
+    common = sorted(set.intersection(*step_sets))
+    n_dropped = len(set.union(*step_sets)) - len(common)
+    if n_dropped:
+        warnings.warn(
+            f"{runs[0].run_dir.parent}: {n_dropped} env_steps value(s) are not present in all "
+            f"{len(runs)} finished runs and are left out of the value curve",
+            AggregateWarning,
+            stacklevel=2,
+        )
+    values = np.array([s.loc[common, "value"].to_numpy(dtype=np.float64) for s in series]).reshape(len(runs), -1)
+    returns = np.array([s.loc[common, "return"].to_numpy(dtype=np.float64) for s in series]).reshape(len(runs), -1)
+    gaps = values - returns
+    return pd.DataFrame(
+        {
+            "env_steps": np.array(common, dtype=np.int64),
+            "n_seeds": len(runs),
+            "value_mean": values.mean(axis=0),
+            "value_ci95": _t_half_width(values, axis=0),
+            "return_mean": returns.mean(axis=0),
+            "return_ci95": _t_half_width(returns, axis=0),
+            "gap_mean": gaps.mean(axis=0),
+            "gap_ci95": _t_half_width(gaps, axis=0),
+        },
+        columns=list(VALUE_CURVE_COLUMNS),
+    )
 
 
 # ----------------------------------------------------------------------- CLI

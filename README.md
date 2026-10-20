@@ -53,21 +53,23 @@ snake_rl/
     baselines.py random / BFS greedy (time-aware) / Hamiltonian cycle
     tabular_q.py tabular Q-learning on observation A (synchronous batch form)
     schedules.py linear epsilon schedule
-    dqn/         config.py (torch-free), networks.py (MLP on observation A, CNN on observation B),
-                 replay.py (uniform), agent.py (DQN with target network; Double DQN switch;
-                 the training loop's replay switch is agent.replay in the config)
+    dqn/         config.py (torch-free), networks.py (MLP on observation A, CNN on observation B,
+                 Dueling head), replay.py (uniform and prioritised), agent.py (DQN with target
+                 network; Double DQN switch; the training loop's replay switch is agent.replay)
   config.py      YAML experiment files: loading, --set overrides, validation, seed layout
   train.py       config-driven training, writes runs/<exp>/<seed>/ (tabular Q and DQN)
-  evaluate.py    greedy evaluation protocol with death-cause breakdown, scalar and batched (+ CLI)
+  evaluate.py    greedy evaluation protocol with death-cause breakdown, scalar and batched (+ CLI);
+                 with gamma also the value estimate against the realised return (overestimation)
   utils.py       git hash and other reproducibility helpers
-  analysis/      aggregate.py (results table and learning curves from run directories),
-                 plots.py (evaluation-curve figure)
+  analysis/      aggregate.py (results table, learning curves and value curves from run directories),
+                 plots.py (evaluation-curve figure; --values: max-Q estimate vs realised return)
   gui/app.py     pygame: human play (optionally with an advising agent) / agent play with the
                  live action-value panel / replay of recorded episodes; headless screenshots
 tests/           pytest; the scalar-vs-vectorised equivalence test is the regression gate
 configs/         one yaml per experiment
 scripts/         check_env.py, bench_vec_env.py (env throughput), bench_update.py (one gradient step,
-                 cpu vs cuda), run_matrix.py (seeds x grid batch runner),
+                 cpu vs cuda), run_matrix.py (seeds x grid batch runner), backfill_values.py (the
+                 overestimation measurement for runs trained before M7, from their checkpoints),
                  gui_screenshots.py (the Part D figures, rendered by the GUI without a window)
 notebooks/       Colab notebook regenerating the main figures from logs/checkpoints
 runs/            training outputs (not in git)
@@ -139,6 +141,21 @@ python -m snake_rl.analysis.plots --exp "runs/tabular_q_W10=tabular Q-learning" 
 draws the evaluation curves (mean over seeds with a Student-t band; baselines as
 dashed lines). `aggregate --last-k 5` adds the mean of the last five evaluations
 per seed, which is less noisy than the last snapshot.
+
+Every DQN run also logs, at each evaluation, the network's value estimate
+`max_a Q` on the states its greedy policy visits and the discounted return it
+then realises from them (the overestimation measurement of the Double DQN
+study, van Hasselt et al. 2016). Runs trained before that measurement existed
+get it from their checkpoints:
+
+```powershell
+python scripts/backfill_values.py --exp runs/dqn_A_W8 runs/dqn_B8_W8 --device auto    # writes values.csv per run
+python -m snake_rl.analysis.plots --values --exp "runs/dqn_B8_W8=DQN" "runs/dqn_B8_W8_double=Double DQN" --out runs/figures/m7_W8_values.png
+```
+
+The refinements are switches of the shipped configs: `--set agent.double=true`
+(Double DQN target), `agent.dueling=true` (Dueling head), `agent.per=true`
+(prioritised replay), each with its own `--exp`.
 
 Results on the 11-feature observation (5 seeds, 100 greedy episodes each on the
 baselines' boards; last evaluation):

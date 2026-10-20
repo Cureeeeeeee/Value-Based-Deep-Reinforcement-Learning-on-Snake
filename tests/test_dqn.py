@@ -64,9 +64,18 @@ The replay storage is read through the sampling protocol itself, with a
 generator whose ``integers`` returns scripted indices.
 
 Layout: config, networks (MLP, then the CNN of M6), replay buffer, agent
-construction, action selection, update on hand-built transitions, target
-network, failure and purity, textbook equivalence (the central test), the
-agent on grid observations (M6), save / load, CUDA, learning sanity.
+construction, action selection, update on hand-built transitions, the
+importance-weighted update of M7, target network, failure and purity,
+textbook equivalence (the central test), the agent on grid observations (M6),
+save / load, CUDA, learning sanity.
+
+M7 (spec D0, D3): ``DQNConfig`` gains ``dueling``, ``per``, ``per_alpha``,
+``per_beta_start``, ``per_eps``; ``update(batch, weights)`` minimises
+``mean_i(w_i * Huber(q_sa_i - target_i))`` and returns ``td_abs`` (the
+``|q_sa - target|`` of the batch before the step) only when weights are given.
+The Dueling head and the prioritised buffer have their own files
+(``test_m7_dueling.py``, ``test_m7_replay.py``), so this file keeps collecting
+while those names do not exist yet.
 """
 
 from __future__ import annotations
@@ -207,6 +216,12 @@ CONFIG_DEFAULTS = {
     "hidden": (256, 256),
     "conv_channels": (32, 64, 64),
     "double": False,
+    # M7 (D0): the Dueling head and prioritised replay, right after ``double``.
+    "dueling": False,
+    "per": False,
+    "per_alpha": 0.6,
+    "per_beta_start": 0.4,
+    "per_eps": 1e-6,
     "keep_checkpoints": True,
     "device": "auto",
     "torch_threads": None,
@@ -225,9 +240,15 @@ def test_config_defaults_and_immutability():
         cfg.double = True
     with pytest.raises(FrozenInstanceError):
         cfg.replay = False
+    with pytest.raises(FrozenInstanceError):
+        cfg.per = True
     assert DQNConfig(gamma=0.9, hidden=(64,)) == DQNConfig(gamma=0.9, hidden=(64,)) != cfg
     assert DQNConfig(hidden=()).hidden == ()
     assert DQNConfig(replay=False).replay is False and DQNConfig(replay=False) != cfg
+    # M7: the switches are plain fields of the same frozen dataclass (no validation here, see snake_rl.config).
+    assert DQNConfig(dueling=True).dueling is True and DQNConfig(dueling=True) != cfg
+    assert DQNConfig(per=True, per_alpha=0.5, per_beta_start=0.6, per_eps=1e-3) != cfg
+    assert DQNConfig(per=True, per_alpha=0.5).per_alpha == 0.5 and DQNConfig().per_eps == 1e-6
     # M6: a list (YAML, checkpoint) becomes a tuple for conv_channels as for hidden; () = no convolution.
     assert DQNConfig(conv_channels=[8, 8]).conv_channels == (8, 8)
     assert type(DQNConfig(conv_channels=[8, 8]).conv_channels) is tuple
@@ -245,6 +266,7 @@ def test_config_and_package_import_without_torch():
         "from snake_rl.agents.dqn.config import DQNConfig\n"
         "assert DQNConfig().batch_size == 256\n"
         "assert DQNConfig().replay is True and DQNConfig().conv_channels == (32, 64, 64)\n"
+        "assert DQNConfig().dueling is False and DQNConfig().per is False and DQNConfig().per_alpha == 0.6\n"
         "print('torch-loaded' if 'torch' in sys.modules else 'torch-free')\n"
     )
     out = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True, timeout=120)
@@ -1342,6 +1364,182 @@ def test_gradient_norm_is_reported_before_clipping_and_the_step_uses_the_clipped
     assert consumed_norm == pytest.approx(min(grad_clip, BIG_NORM), rel=1e-4)
 
 
+# ------------------------------------------------------------- D3 (M7): update with importance weights
+#: Per-transition multipliers of the Huber loss (Schaul et al. 2016: the
+#: importance-sampling weights; here arbitrary dyadic numbers).
+HAND_WEIGHTS = np.array([0.5, 2.0, 1.0, 0.25], dtype=np.float32)
+#: Per variant on HAND_BATCH with HAND_WEIGHTS: loss = mean_i(w_i * Huber(td_i)),
+#: d loss / d q_i = w_i * clip(td_i, -1, 1) / 4, and |td_i| (the priorities are
+#: updated with it). The targets are those of HAND.
+HAND_WEIGHTED = {
+    False: dict(
+        # td = [0.5, 3, -4, 0.25], Huber [0.125, 2.5, 3.5, 0.03125], weighted [0.0625, 5.0, 3.5, 0.0078125]
+        loss=(0.0625 + 5.0 + 3.5 + 0.0078125) / 4,
+        # d loss / d q = [0.5 * 0.5, 2 * 1, 1 * -1, 0.25 * 0.25] / 4 = [0.0625, 0.5, -0.25, 0.015625]
+        grad_w=[[0.5 * 2 + 0.015625 * 1, 0.015625 * 1], [0.0625 * 1, 0.0625 * 2], [0.0, -0.25 * 1]],
+        grad_b=[0.5 + 0.015625, 0.0625, -0.25],
+        td_abs=[0.5, 3.0, 4.0, 0.25],
+    ),
+    True: dict(
+        # td = [1.5, 3, 0.5, 0.75], Huber [1.0, 2.5, 0.125, 0.28125], weighted [0.5, 5.0, 0.125, 0.0703125]
+        loss=(0.5 + 5.0 + 0.125 + 0.0703125) / 4,
+        # d loss / d q = [0.5 * 1, 2 * 1, 1 * 0.5, 0.25 * 0.75] / 4 = [0.125, 0.5, 0.125, 0.046875]
+        grad_w=[[0.5 * 2 + 0.046875 * 1, 0.046875 * 1], [0.125 * 1, 0.125 * 2], [0.0, 0.125 * 1]],
+        grad_b=[0.5 + 0.046875, 0.125, 0.125],
+        td_abs=[1.5, 3.0, 0.5, 0.75],
+    ),
+}
+TD_ABS_KEYS = STAT_KEYS | {"td_abs"}
+
+
+def weighted_loss_by_autograd(double: bool, weights: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
+    """``mean_i(w_i * Huber(q_sa_i - target_i))`` written out as a formula of the
+    online weights of ``hand_agent`` and differentiated by torch, the targets
+    (``HAND[double]``) being constants. Returns (loss, grad_w, grad_b)."""
+    w = torch.tensor(W_ONLINE, requires_grad=True)
+    b = torch.tensor(B_ONLINE, requires_grad=True)
+    s, a = torch.from_numpy(HAND_BATCH.obs), torch.from_numpy(HAND_BATCH.actions)
+    q_sa = (s @ w.T + b)[torch.arange(4), a]
+    td = q_sa - torch.tensor(HAND[double]["targets"])
+    huber = torch.where(td.abs() < 1.0, 0.5 * td * td, td.abs() - 0.5)
+    loss = (torch.as_tensor(weights, dtype=torch.float32) * huber).mean()
+    grad_w, grad_b = torch.autograd.grad(loss, (w, b))
+    return loss.item(), grad_w.numpy(), grad_b.numpy()
+
+
+@pytest.mark.parametrize("double", [False, True], ids=["dqn", "double"])
+def test_weighted_update_matches_hand_computed_numbers_and_autograd(double):
+    """The gradient the optimiser consumed is the gradient of the written-out
+    weighted loss; ``loss`` is that loss; ``mean_q`` / ``mean_target`` stay
+    the plain batch means; ``grad_norm`` is the norm of the gradient that was
+    minimised (and clipped), before clipping."""
+    want = HAND_WEIGHTED[double]
+    loss, grad_w, grad_b = weighted_loss_by_autograd(double, HAND_WEIGHTS)
+    assert loss == pytest.approx(want["loss"], rel=1e-7)
+    assert np.allclose(grad_w, want["grad_w"], rtol=1e-6, atol=1e-8) and np.allclose(grad_b, want["grad_b"], rtol=1e-6, atol=1e-8)
+
+    agent = hand_agent(double=double)
+    out = agent.update(HAND_BATCH, HAND_WEIGHTS)
+    assert set(out) == TD_ABS_KEYS and all(type(out[key]) is float for key in STAT_KEYS)
+    assert out["loss"] == pytest.approx(want["loss"], rel=1e-6)
+    assert out["loss"] != pytest.approx(HAND[double]["loss"], rel=1e-6)  # the weights did change the loss
+    assert out["mean_q"] == pytest.approx(sum(HAND_Q) / 4, rel=1e-6)  # unweighted
+    assert out["mean_target"] == pytest.approx(sum(HAND[double]["targets"]) / 4, rel=1e-6, abs=1e-7)  # unweighted
+    assert agent.grad_steps == 1
+
+    got_w, got_b = consumed_gradient(agent)
+    assert np.allclose(got_w, want["grad_w"], rtol=1e-5, atol=1e-7)
+    assert np.allclose(got_b, want["grad_b"], rtol=1e-5, atol=1e-7)
+    assert np.allclose(got_w, grad_w, rtol=1e-5, atol=1e-7) and np.allclose(got_b, grad_b, rtol=1e-5, atol=1e-7)
+    norm = math.sqrt(sum(g * g for g in np.ravel(want["grad_w"]).tolist() + list(want["grad_b"])))
+    assert norm < agent.cfg.grad_clip
+    assert out["grad_norm"] == pytest.approx(norm, rel=1e-5)
+    # The target network is untouched and the batch was not modified.
+    (target_layer,) = linear_layers(agent.target_net)
+    assert target_layer.weight.tolist() == W_TARGET and target_layer.bias.tolist() == B_TARGET
+    assert np.array_equal(HAND_WEIGHTS, [0.5, 2.0, 1.0, 0.25])
+
+
+def test_zero_weights_remove_transitions_from_the_loss():
+    """Weights [0, 0, 0, 4]: the loss and the gradient are those of row 3 alone
+    (its Huber value 0.03125 times 4, over the batch of 4)."""
+    agent = hand_agent()
+    out = agent.update(HAND_BATCH, np.array([0.0, 0.0, 0.0, 4.0]))
+    assert out["loss"] == pytest.approx(4 * 0.03125 / 4, rel=1e-6)
+    grad_w, grad_b = consumed_gradient(agent)
+    # d loss / d q_3 = 4 * 0.25 / 4 = 0.25 on action 0 with s = (1, 1); nothing from rows 0 .. 2.
+    assert np.allclose(grad_w, [[0.25, 0.25], [0.0, 0.0], [0.0, 0.0]], rtol=1e-5, atol=1e-7)
+    assert np.allclose(grad_b, [0.25, 0.0, 0.0], rtol=1e-5, atol=1e-7)
+    assert out["mean_q"] == pytest.approx(1.375) and out["mean_target"] == pytest.approx(1.4375)  # still the batch means
+    assert out["td_abs"].tolist() == HAND_WEIGHTED[False]["td_abs"]  # the TD errors do not depend on the weights
+
+
+def test_weights_of_ones_give_bit_for_bit_the_unweighted_update():
+    """Float32 ones (the dtype of ``PrioritizedBatch.weights``): the loss, the
+    step and the four statistics are exactly those of ``update(batch)``."""
+    agent = small_agent(seed=4, target_update_every=3, double=True)
+    twin = small_agent(seed=4, target_update_every=3, double=True)
+    rng = np.random.default_rng(8)
+    for step in range(1, 8):
+        batch = random_batch(rng)
+        plain = twin.update(batch)
+        weighted = agent.update(batch, np.ones(len(batch.actions), dtype=np.float32))
+        assert set(plain) == STAT_KEYS and set(weighted) == TD_ABS_KEYS, step
+        assert {key: weighted[key] for key in STAT_KEYS} == plain, step  # bit for bit, including the loss
+        assert same(weights(agent.q_net), weights(twin.q_net)) and same(weights(agent.target_net), weights(twin.target_net))
+    assert agent.grad_steps == twin.grad_steps == 7
+    # ... and the keyword spelling is the same call.
+    batch = random_batch(rng)
+    assert {k: v for k, v in agent.update(batch, weights=np.ones(32, dtype=np.float32)).items() if k in STAT_KEYS} == twin.update(batch)
+
+
+@pytest.mark.parametrize("double", [False, True], ids=["dqn", "double"])
+@pytest.mark.parametrize("row", [0, 1, 2, 3], ids=["non-terminal", "terminal", "truncated", "non-terminal-quadratic"])
+def test_td_abs_of_one_transition_is_the_absolute_td_error_before_the_step(double, row):
+    want = HAND_WEIGHTED[double]["td_abs"][row]
+    agent = hand_agent(double=double)
+    out = agent.update(hand_rows([row]), np.array([1.0], dtype=np.float32))
+    td_abs = out["td_abs"]
+    assert isinstance(td_abs, np.ndarray) and td_abs.shape == (1,) and td_abs.dtype == np.float32
+    assert td_abs[0] == want  # exact: dyadic numbers
+    assert out["loss"] == pytest.approx(huber(want), rel=1e-6)
+    # Before the step: the online network has moved since, so |q_sa - target| differs now.
+    q_after = agent.q_values(HAND_BATCH.obs[row : row + 1])[0, HAND_BATCH.actions[row]]
+    assert abs(q_after - HAND[double]["targets"][row]) != pytest.approx(want, abs=1e-6)
+    # Independent of the weight (a weight scales the loss, not the error).
+    assert hand_agent(double=double).update(hand_rows([row]), np.array([3.0]))["td_abs"][0] == want
+
+
+@pytest.mark.parametrize("double", [False, True], ids=["dqn", "double"])
+def test_td_abs_of_the_whole_batch(double):
+    out = hand_agent(double=double).update(HAND_BATCH, HAND_WEIGHTS)
+    assert out["td_abs"].dtype == np.float32 and out["td_abs"].shape == (4,)
+    assert out["td_abs"].tolist() == HAND_WEIGHTED[double]["td_abs"]
+    assert (out["td_abs"] >= 0).all()
+
+
+def test_td_abs_key_only_when_weights_are_given():
+    agent = small_agent(seed=1)
+    rng = np.random.default_rng(2)
+    batch = random_batch(rng)
+    out = agent.update(batch)
+    assert set(out) == STAT_KEYS
+    out = agent.update(batch, None)  # None is the default
+    assert set(out) == STAT_KEYS
+    out = agent.update(batch, np.full(32, 0.5))
+    assert set(out) == TD_ABS_KEYS and all(type(out[key]) is float and math.isfinite(out[key]) for key in STAT_KEYS)
+    td_abs = out["td_abs"]
+    assert isinstance(td_abs, np.ndarray) and td_abs.shape == (32,) and td_abs.dtype == np.float32
+    assert np.isfinite(td_abs).all() and (td_abs >= 0).all() and td_abs.max() > 0
+    assert agent.grad_steps == 3
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [np.ones(5), np.ones(3), np.ones((4, 1)), np.ones((1, 4)), np.ones(1), np.ones(()), np.ones((2, 2))],
+    ids=lambda bad: f"shape{bad.shape}",
+)
+def test_weights_of_the_wrong_shape_are_refused_before_anything_changes(bad):
+    agent = hand_agent()
+    before = weights(agent.q_net)
+    with pytest.raises(ValueError):
+        agent.update(HAND_BATCH, bad)
+    assert same(weights(agent.q_net), before) and agent.grad_steps == 0
+    assert agent.update(HAND_BATCH, np.ones(4))["loss"] == pytest.approx(HAND[False]["loss"], rel=1e-6)
+
+
+def test_non_finite_rule_holds_with_weights_too():
+    agent = small_agent(seed=2)
+    rng = np.random.default_rng(0)
+    agent.update(random_batch(rng), np.ones(32))
+    online, target = weights(agent.q_net), weights(agent.target_net)
+    poisoned = random_batch(rng)
+    poisoned.rewards[3] = np.nan
+    with pytest.raises(FloatingPointError):
+        agent.update(poisoned, np.ones(32))
+    assert same(weights(agent.q_net), online) and same(weights(agent.target_net), target) and agent.grad_steps == 1
+
+
 # ------------------------------------------------------------- D3: target network
 @pytest.mark.parametrize("every", [1, 3, 4])
 def test_target_network_is_synced_exactly_every_k_gradient_steps(every):
@@ -1715,12 +1913,15 @@ def test_cnn_agent_update_on_real_grid_transitions_is_finite_and_moves_the_weigh
 
 
 # ------------------------------------------------------------- save / load
-#: Every field away from its default, with values float32 cannot hold.
+#: Every field away from its default, with values float32 cannot hold. M7: the
+#: PER fields too (inert for the agent itself); ``dueling`` stays False here
+#: because it changes the network - the dueling round trips live in
+#: ``tests/test_m7_dueling.py`` on ``replace(AWKWARD_CFG, dueling=True)``.
 AWKWARD_CFG = DQNConfig(
     gamma=1.0 / 3.0, lr=1.2345678e-3, batch_size=48, buffer_size=5_000, replay=False, learning_starts=96,
     grad_steps_per_vec_step=1, target_update_every=4, grad_clip=0.7, eps_start=0.9, eps_end=0.01,
-    eps_decay_fraction=0.35, hidden=(12, 8), conv_channels=(5,), double=True, keep_checkpoints=False, device="cpu",
-    torch_threads=1,
+    eps_decay_fraction=0.35, hidden=(12, 8), conv_channels=(5,), double=True, dueling=False, per=True,
+    per_alpha=0.7, per_beta_start=0.55, per_eps=1.5e-5, keep_checkpoints=False, device="cpu", torch_threads=1,
 )
 
 
@@ -1817,6 +2018,9 @@ def test_saved_config_entry_spells_out_every_field_with_the_tuples_as_lists(tmp_
     assert config["hidden"] == [12, 8] and type(config["hidden"]) is list
     assert config["conv_channels"] == [5] and type(config["conv_channels"]) is list  # M6, also on observation A
     assert config["replay"] is False and config["double"] is True and config["grad_steps_per_vec_step"] == 1
+    # M7 (D3): the five new fields travel through ``asdict`` like the others.
+    assert config["dueling"] is False and config["per"] is True
+    assert config["per_alpha"] == 0.7 and config["per_beta_start"] == 0.55 and config["per_eps"] == 1.5e-5
     assert list(payload["obs_shape"]) == [OBS_DIM] and payload["n_actions"] == 4 and payload["grad_steps"] == 6
 
 

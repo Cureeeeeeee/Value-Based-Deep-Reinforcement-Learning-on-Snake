@@ -1,6 +1,7 @@
 """Config-driven training entry point (PLAN.md milestones M4: tabular
-Q-learning, M5: DQN, M6: DQN without replay). ``agent.kind`` of the
-configuration selects the trainer.
+Q-learning, M5: DQN, M6: DQN without replay, M7: prioritised replay and the
+value-estimate columns). ``agent.kind`` of the configuration selects the
+trainer.
 
 Command line::
 
@@ -140,6 +141,40 @@ replay loop this changes two things at once, both of which the buffer
 provides: the mixing of a batch across time and policies, and the number of
 gradient steps per transition (64 in the shipped configurations, 1 here).
 
+DQN with prioritised replay (``agent.per: true``, M7)
+-----------------------------------------------------
+The replay loop with a ``PrioritizedReplayBuffer`` (Schaul et al. 2016) in
+place of the uniform one::
+
+    buffer = PrioritizedReplayBuffer(buffer_size, obs_shape, per_alpha, per_eps)
+    for k = 0, 1, ...:
+        epsilon = ...
+        beta = linear_schedule(k * n_envs, per_beta_start, 1.0, total_env_steps)
+        ... act, step, buffer.add(...), obs = next_obs ...
+        if env_steps >= learning_starts:
+            G times:
+                batch = buffer.sample(batch_size, sample_rng, beta)
+                stats = agent.update(batch, batch.weights)
+                buffer.update_priorities(batch.indices, stats["td_abs"])
+
+``beta``, the importance-sampling exponent, is a function of the env steps
+before the vec-step like epsilon (the same for the ``G`` gradient steps of
+one vec-step) and reaches 1.0 at ``total_env_steps``. The sampling stream
+``default_rng([seed, 2])`` is drawn once per sample as before. Everything
+else - transitions stored, evaluations, files - is the replay loop's.
+
+Value estimates (every DQN run, M7)
+-----------------------------------
+Each evaluation is ``evaluate_batched(agent, cfg.env, eval_episodes,
+eval_seed, gamma=agent.gamma)``: besides the score it records, for the states
+the greedy policy visits on the evaluation boards, the network's value
+estimate ``max_a Q(s, a)`` and the discounted return the policy then collects
+from the state (``snake_rl.evaluate``, module docstring). The four
+``eval_value_* / eval_return_*`` columns are the measurement of van Hasselt
+et al. (2016) for the Double DQN study; their difference is the
+overestimation. Runs trained before M7 get the same columns from their
+checkpoints with ``scripts/backfill_values.py`` (``values.csv``).
+
 Seeds
 -----
 The run seed fixes everything. The training boards use the generators
@@ -179,14 +214,18 @@ empty strings; numbers are written with ``repr``, so nothing is rounded.
 metrics.csv (DQN)
 -----------------
 ``env_steps``, ``vec_steps``, ``epsilon``, ``eval_*``, ``train_episodes``,
-``train_mean_score``, ``wall_time_s``: as above. ``grad_steps``: gradient
+``train_mean_score``, ``wall_time_s``: as above. ``eval_value_start``,
+``eval_return_start``, ``eval_value_visited``, ``eval_return_visited``:
+``EvalResult.value_summary()`` of that evaluation (the value estimates
+against the realised returns, above). ``grad_steps``: gradient
 steps taken so far (``agent.grad_steps``). ``train_truncated``: training
 episodes since the previous row that ended by starvation truncation.
 ``loss``, ``mean_q``, ``mean_target``, ``grad_norm``: means of the
-``DQNAgent.update`` statistics since the previous row (Huber loss, mean
-``Q(s, a)`` of the batch, mean target, global gradient norm before clipping);
-empty while no update has happened. ``buffer_size``: transitions in the
-replay buffer (0 without replay). ``time_env_s``, ``time_act_s``, ``time_update_s``,
+``DQNAgent.update`` statistics since the previous row (Huber loss,
+importance-weighted with prioritised replay, mean ``Q(s, a)`` of the batch,
+mean target, global gradient norm before clipping); empty while no update
+has happened. ``buffer_size``: transitions in the replay buffer (0 without
+replay). ``time_env_s``, ``time_act_s``, ``time_update_s``,
 ``time_eval_s``: cumulative seconds since the start spent in ``env.step``, in
 ``act_epsilon``, in sampling + gradient steps, and in evaluations; what is
 left of ``wall_time_s`` is the buffer writes, checkpoints and bookkeeping.
@@ -218,7 +257,11 @@ from typing import TYPE_CHECKING, Any, Sequence
 import numpy as np
 import yaml
 
-from snake_rl.agents.dqn import Batch, ReplayBuffer  # numpy only; the torch part is imported by the DQN trainer
+from snake_rl.agents.dqn import (  # numpy only; the torch part is imported by the DQN trainer
+    Batch,
+    PrioritizedReplayBuffer,
+    ReplayBuffer,
+)
 from snake_rl.agents.schedules import linear_schedule
 from snake_rl.agents.tabular_q import TabularQAgent
 from snake_rl.config import ExperimentConfig, config_from_dict, config_to_dict, env_seed_for, load_config
@@ -265,6 +308,9 @@ TABULAR_COLUMNS = (
     "cells_visited",
     "wall_time_s",
 )
+#: The value estimates against the realised returns of an evaluation (M7;
+#: ``EvalResult.value_summary()``), DQN only.
+VALUE_COLUMNS = ("eval_value_start", "eval_return_start", "eval_value_visited", "eval_return_visited")
 #: The statistics ``DQNAgent.update`` returns, averaged per metrics row.
 UPDATE_STATS = ("loss", "mean_q", "mean_target", "grad_norm")
 #: The phases of the DQN loop that are timed (``time_<phase>_s``).
@@ -276,6 +322,7 @@ DQN_COLUMNS = (
     "grad_steps",
     "epsilon",
     *EVAL_COLUMNS,
+    *VALUE_COLUMNS,
     "train_episodes",
     "train_mean_score",
     "train_truncated",
@@ -391,11 +438,30 @@ def _train_dqn(cfg: ExperimentConfig, seed: int, run_dir: Path, quiet: bool) -> 
         torch.set_num_threads(ac.torch_threads)
     env = VecSnakeEnv(cfg.env, tc.n_envs, seed=env_seed_for(seed, tc.n_envs))
     agent = DQNAgent(env.obs_shape, env.n_actions, ac, seed=seed)  # initial weights: a function of the run seed
-    buffer = ReplayBuffer(ac.buffer_size, env.obs_shape) if ac.replay else None
+    buffer: ReplayBuffer | None = None
+    if ac.replay:
+        buffer = (
+            PrioritizedReplayBuffer(ac.buffer_size, env.obs_shape, ac.per_alpha, ac.per_eps)
+            if ac.per
+            else ReplayBuffer(ac.buffer_size, env.obs_shape)
+        )
     explore_rng = np.random.default_rng([seed, 1])  # exploration stream, as in the tabular loop
     sample_rng = np.random.default_rng([seed, 2])  # replay sampling stream (created, never drawn without replay)
     grad_steps_per_vec_step = (ac.grad_steps_per_vec_step or max(1, tc.n_envs // 4)) if ac.replay else 1
     decay_steps = ac.eps_decay_fraction * tc.total_env_steps
+
+    def learn_from_buffer(env_steps_before: int) -> None:
+        """The gradient steps of one vec-step with replay: uniform, or prioritised (module docstring)."""
+        if isinstance(buffer, PrioritizedReplayBuffer):
+            beta = linear_schedule(env_steps_before, ac.per_beta_start, 1.0, tc.total_env_steps)
+            for _ in range(grad_steps_per_vec_step):
+                batch = buffer.sample(ac.batch_size, sample_rng, beta)
+                stats = agent.update(batch, batch.weights)
+                buffer.update_priorities(batch.indices, stats["td_abs"])
+                window.add_update(stats)
+        else:
+            for _ in range(grad_steps_per_vec_step):
+                window.add_update(agent.update(buffer.sample(ac.batch_size, sample_rng)))
     # Queued GPU work is waited for at row boundaries only, never per update.
     timer = PhaseTimer(synchronize=torch.cuda.synchronize if agent.device.type == "cuda" else None)
 
@@ -425,8 +491,7 @@ def _train_dqn(cfg: ExperimentConfig, seed: int, run_dir: Path, quiet: bool) -> 
                 if env_steps >= ac.learning_starts:
                     with timer.phase("update"):
                         if buffer is not None:
-                            for _ in range(grad_steps_per_vec_step):
-                                window.add_update(agent.update(buffer.sample(ac.batch_size, sample_rng)))
+                            learn_from_buffer(k * tc.n_envs)
                         else:  # no replay: this vec-step's own transitions, once, one gradient step
                             own = Batch(obs=obs, actions=actions, rewards=reward, next_obs=info["final_obs"],
                                         terminated=terminated)
@@ -536,7 +601,7 @@ def _evaluate_dqn(
     ac, tc = cfg.agent, cfg.train
     timer.flush("update")  # the gradient steps since the previous row are complete before the clock is read
     with timer.phase("eval"):  # ends with the action values on the host, so nothing is left queued
-        result = evaluate_batched(agent, cfg.env, tc.eval_episodes, tc.eval_seed)
+        result = evaluate_batched(agent, cfg.env, tc.eval_episodes, tc.eval_seed, gamma=ac.gamma)
     if ac.keep_checkpoints:
         agent.save(run_dir / CHECKPOINT_DIR / f"step_{env_steps:08d}.pt", include_optimizer=False)
     row = {
@@ -545,6 +610,7 @@ def _evaluate_dqn(
         "grad_steps": agent.grad_steps,
         "epsilon": epsilon,
         **eval_columns(result),
+        **value_columns(result),
         "train_episodes": window.episodes,
         "train_mean_score": window.mean_score,
         "train_truncated": window.truncated,
@@ -764,6 +830,14 @@ def eval_columns(result: EvalResult) -> dict[str, Any]:
         "eval_frac_starve": frac["starve"],
         "eval_frac_win": frac["win"],
     }
+
+
+def value_columns(result: EvalResult) -> dict[str, float]:
+    """The ``eval_value_* / eval_return_*`` columns (``EvalResult.value_summary()``)."""
+    values = result.value_summary()
+    if values is None:
+        raise ValueError("the evaluation carries no value estimates: evaluate with gamma")
+    return {f"eval_{name}": values[name] for name in ("value_start", "return_start", "value_visited", "return_visited")}
 
 
 def _progress_line(label: str, total_env_steps: int, row: Mapping[str, Any]) -> str:

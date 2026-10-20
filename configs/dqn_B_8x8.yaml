@@ -29,6 +29,13 @@
 #   neither:
 #     --exp dqn_B8_W8_noreplay_notarget --set agent.replay=false agent.target_update_every=1
 # (with scripts/run_matrix.py: the same --set values and --exp-prefix instead of --exp)
+# The M7 refinements are this file with --set (--set needs a new --exp; combine the flags for a
+# combined row):
+#   Double DQN target:        --exp dqn_B8_W8_double --set agent.double=true
+#   Dueling head:             --exp dqn_B8_W8_dueling --set agent.dueling=true
+#   prioritised replay:       --exp dqn_B8_W8_per --set agent.per=true
+# Every DQN run also logs the value estimate against the realised return (eval_value_* /
+# eval_return_* columns), the overestimation measurement of the Double DQN study.
 exp: dqn_B8_W8
 env:
   W: 8
@@ -52,7 +59,12 @@ agent:
   eps_decay_fraction: 0.2        # epsilon reaches eps_end after 20 % of total_env_steps
   hidden: [512]                  # the fully connected layer after the convolutions (the resource's features_dim)
   conv_channels: [32, 64, 64]    # three 3x3 convolutions, stride 1, padding 1
-  double: false                  # Double DQN is studied in M7
+  double: false                  # Double DQN target (M7: the overestimation study)
+  dueling: false                 # Dueling head V + A - mean(A) (M7)
+  per: false                     # prioritised replay (M7); needs replay: true
+  per_alpha: 0.6                 # priority exponent
+  per_beta_start: 0.4            # importance-sampling exponent at step 0, annealed to 1.0 at total_env_steps
+  per_eps: 1.0e-6                # added to |td| before the exponent
   keep_checkpoints: true         # weights-only checkpoint at every evaluation
   device: cuda                   # M6 benchmark (docs/PROGRESS.md): the CNN update is faster on the GPU
   torch_threads: 2

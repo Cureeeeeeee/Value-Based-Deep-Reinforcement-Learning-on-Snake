@@ -29,15 +29,28 @@ built with the object-oriented API on an Agg canvas (``matplotlib.pyplot`` is
 never imported, ``matplotlib.use`` is never called), so importing this module
 in a notebook leaves the inline backend of the notebook alone.
 
+Value figure (M7, :func:`plot_value_curves`): the overestimation measurement
+of van Hasselt et al. (2016). Per experiment a SOLID line, the mean over
+seeds of the network's value estimate ``max_a Q`` on the states the greedy
+policy visits during evaluation, and a DASHED line in the same colour, the
+discounted return the policy then actually realises from those states
+(``aggregate.value_curve``); both with their seed-level t bands. The vertical
+distance between the two is the overestimation; a Double DQN row is read
+against a DQN row. No baselines (a non-learning player has no estimate).
+
 CLI::
 
     python -m snake_rl.analysis.plots --exp DIR[=LABEL] ... [--baseline FILE[=LABEL] ...] --out FILE.png
                                       [--title T] [--ylabel TEXT]
+    python -m snake_rl.analysis.plots --values --exp DIR[=LABEL] ... --out FILE.png [--title T] [--ylabel TEXT]
+                                      [--start]
 
 e.g. ``--exp "runs/tabular_q_W10=tabular Q" "runs/dqn_A_W10=DQN" --baseline
 "runs/baselines/bfs_W10_relative.json=BFS greedy" --out
 runs/figures/part_c_W10.png``. Without ``=LABEL`` the label is the directory
-name (experiments) or the file stem (baselines).
+name (experiments) or the file stem (baselines). ``--values`` draws the value
+figure (``--start``: the first state of each episode instead of all visited
+states; no ``--baseline``).
 """
 
 from __future__ import annotations
@@ -54,7 +67,7 @@ from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter
 from matplotlib.transforms import offset_copy
 
-from snake_rl.analysis.aggregate import learning_curve, summarise_baseline
+from snake_rl.analysis.aggregate import learning_curve, summarise_baseline, value_curve
 from snake_rl.utils import REPO_ROOT
 
 #: Categorical colours of the learner series, in fixed slot order
@@ -78,12 +91,16 @@ FONT_SIZE = 9.0
 MAX_DIRECT_LABELS = 4
 
 DEFAULT_YLABEL = "mean score (100 greedy episodes)"
+DEFAULT_VALUE_YLABEL = "discounted return (greedy evaluation)"
 #: Figures are regenerable from the logs: this file may be overwritten.
 DEFAULT_OUT = REPO_ROOT / "runs" / "figures" / "learning_curves.png"
 
 #: gid prefixes of the artists, for tests and for restyling in a notebook:
 #: ``series:<i>`` line and ``band:<i>`` of experiment i, ``baseline:<j>``.
 GID_SERIES, GID_BAND, GID_BASELINE = "series", "band", "baseline"
+#: The value figure: ``value:<i>`` / ``value_band:<i>`` (the estimate, solid)
+#: and ``return:<i>`` / ``return_band:<i>`` (the realised return, dashed).
+GID_VALUE, GID_VALUE_BAND, GID_RETURN, GID_RETURN_BAND = "value", "value_band", "return", "return_band"
 
 
 def _format_steps(value: float, _pos: int | None = None) -> str:
@@ -203,7 +220,28 @@ def learning_curve_figure(
     pad = 0.012 * (x_hi - x_lo) if x_hi > x_lo else 1.0
     ax.set_xlim(x_lo - pad, x_hi + pad)
     ax.set_ylim(0.0, 1.06 * y_top if y_top > 0.0 else 1.0)  # a score is a count of food eaten: the axis starts at 0
+    _style_axes(fig, ax, ylabel, title)
 
+    # Legend: a row above the axes, so that it can never cover a curve.
+    handles: list[Line2D | Patch] = [
+        Line2D([], [], color=SERIES_COLORS[i], linewidth=LINE_WIDTH, label=label)
+        for i, (label, _, _) in enumerate(curves)
+    ]
+    if band_seeds:
+        handles.append(_band_handle(band_seeds))
+    if levels:
+        handles.append(
+            Line2D([], [], color=INK_SECONDARY, linewidth=BASELINE_WIDTH, linestyle="--",
+                   label="non-learning baseline")
+        )
+    _legend_row(ax, handles)
+
+    _label_line_ends(fig, ax, ends, x_reach=x_hi - 0.04 * (x_hi - x_lo))
+    return fig
+
+
+def _style_axes(fig: Figure, ax, ylabel: str, title: str | None) -> None:
+    """Axis labels, grid, spines, ticks and the title, shared by the figures."""
     ax.xaxis.set_major_formatter(FuncFormatter(_format_steps))
     ax.set_xlabel("environment steps", fontsize=FONT_SIZE + 1, color=INK_SECONDARY)
     ax.set_ylabel(ylabel, fontsize=FONT_SIZE + 1, color=INK_SECONDARY)
@@ -218,26 +256,98 @@ def learning_curve_figure(
     if title is not None:
         fig.suptitle(title, x=0.015, ha="left", fontsize=FONT_SIZE + 2, color=INK)
 
-    # Legend: a row above the axes, so that it can never cover a curve.
+
+def _band_handle(band_seeds: set[int]) -> Patch:
+    over = f"{next(iter(band_seeds))} seeds" if len(band_seeds) == 1 else "seeds"
+    return Patch(facecolor=INK_SECONDARY, alpha=BAND_ALPHA, edgecolor="none", label=f"95% CI over {over}")
+
+
+def _legend_row(ax, handles: Sequence[Line2D | Patch]) -> None:
+    """A legend row above the axes, so that it can never cover a curve."""
+    ax.legend(
+        handles=handles, loc="lower left", bbox_to_anchor=(0.0, 1.01), borderaxespad=0.0, frameon=False,
+        ncols=_legend_columns([h.get_label() for h in handles]), fontsize=FONT_SIZE, labelcolor=INK,
+        handlelength=2.2, columnspacing=1.4,  # 2.2 em: four whole dashes in the key of a dashed line
+    )
+
+
+def value_curve_figure(
+    experiments: Sequence[tuple[str, str | Path]],
+    which: str = "visited",
+    title: str | None = None,
+    ylabel: str = DEFAULT_VALUE_YLABEL,
+) -> Figure:
+    """The figure of :func:`plot_value_curves`, not saved (module docstring).
+
+    One axes. Per experiment i, in ``SERIES_COLORS[i]``: the solid line
+    ``value:<i>`` (mean over seeds of the value estimate) with its band
+    ``value_band:<i>``, and the dashed line ``return:<i>`` (mean realised
+    return) with its band ``return_band:<i>``; no bands for one seed.
+    """
+    experiments = [(str(label), Path(d)) for label, d in experiments]
+    if not experiments:
+        raise ValueError("at least one experiment is needed")
+    if len(experiments) > len(SERIES_COLORS):
+        raise ValueError(
+            f"{len(experiments)} experiments, but there are {len(SERIES_COLORS)} series colours and they are "
+            f"never reused: split the comparison into several figures"
+        )
+    labels = [label for label, _ in experiments]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"labels must be unique within one figure, got {labels}")
+    curves = [(label, d, value_curve(d, which)) for label, d in experiments]
+    for _, d, curve in curves:
+        if curve.empty:
+            raise ValueError(f"{d}: no evaluation step is common to all finished runs")
+
+    fig = Figure(figsize=FIGSIZE, dpi=DPI, facecolor=SURFACE, layout="constrained")
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot()
+    ax.set_facecolor(SURFACE)
+
+    ends: list[tuple[str, tuple[float, float], object]] = []
+    band_seeds: set[int] = set()
+    x_lo, x_hi, y_lo, y_hi = np.inf, -np.inf, 0.0, 0.0
+    series = ((GID_VALUE, GID_VALUE_BAND, "value_mean", "value_ci95", "-"),
+              (GID_RETURN, GID_RETURN_BAND, "return_mean", "return_ci95", "--"))
+    for i, (label, _, curve) in enumerate(curves):
+        x = curve["env_steps"].to_numpy(dtype=np.float64)
+        for gid_line, gid_band, mean_column, ci_column, style in series:
+            mean = curve[mean_column].to_numpy(dtype=np.float64)
+            half = curve[ci_column].to_numpy(dtype=np.float64)
+            lower, upper = mean, mean
+            if np.isfinite(half).all():  # nan for a single seed: one replicate has no spread
+                lower, upper = mean - half, mean + half
+                band = ax.fill_between(
+                    x, lower, upper, facecolor=SERIES_COLORS[i], edgecolor="none", linewidth=0.0,
+                    alpha=BAND_ALPHA, zorder=2,
+                )
+                band.set_gid(f"{gid_band}:{i}")
+                band_seeds.add(int(curve["n_seeds"].iloc[0]))
+            (line,) = ax.plot(
+                x, mean, color=SERIES_COLORS[i], linewidth=LINE_WIDTH, linestyle=style, solid_capstyle="round",
+                solid_joinstyle="round", zorder=4, label=label if style == "-" else None,
+            )
+            line.set_gid(f"{gid_line}:{i}")
+            y_lo, y_hi = min(y_lo, float(lower.min())), max(y_hi, float(upper.max()))
+        if len(curves) <= MAX_DIRECT_LABELS:
+            ends.append((label, (float(x[-1]), float(curve["value_mean"].iloc[-1])), ax.transData))
+        x_lo, x_hi = min(x_lo, float(x[0])), max(x_hi, float(x[-1]))
+
+    pad = 0.012 * (x_hi - x_lo) if x_hi > x_lo else 1.0
+    ax.set_xlim(x_lo - pad, x_hi + pad)
+    ax.set_ylim(min(0.0, y_lo), 1.06 * y_hi if y_hi > 0.0 else 1.0)  # a death costs -1: the return can be negative
+    _style_axes(fig, ax, ylabel, title)
+
     handles: list[Line2D | Patch] = [
         Line2D([], [], color=SERIES_COLORS[i], linewidth=LINE_WIDTH, label=label)
         for i, (label, _, _) in enumerate(curves)
     ]
+    handles.append(Line2D([], [], color=INK_SECONDARY, linewidth=LINE_WIDTH, label="max-Q estimate"))
+    handles.append(Line2D([], [], color=INK_SECONDARY, linewidth=LINE_WIDTH, linestyle="--", label="realised return"))
     if band_seeds:
-        over = f"{band_seeds.pop()} seeds" if len(band_seeds) == 1 else "seeds"
-        handles.append(
-            Patch(facecolor=INK_SECONDARY, alpha=BAND_ALPHA, edgecolor="none", label=f"95% CI over {over}")
-        )
-    if levels:
-        handles.append(
-            Line2D([], [], color=INK_SECONDARY, linewidth=BASELINE_WIDTH, linestyle="--",
-                   label="non-learning baseline")
-        )
-    ax.legend(
-        handles=handles, loc="lower left", bbox_to_anchor=(0.0, 1.01), borderaxespad=0.0, frameon=False,
-        ncols=_legend_columns([h.get_label() for h in handles]), fontsize=FONT_SIZE, labelcolor=INK,
-        handlelength=2.2, columnspacing=1.4,  # 2.2 em: four whole dashes in the key of the dashed line
-    )
+        handles.append(_band_handle(band_seeds))
+    _legend_row(ax, handles)
 
     _label_line_ends(fig, ax, ends, x_reach=x_hi - 0.04 * (x_hi - x_lo))
     return fig
@@ -302,6 +412,29 @@ def plot_learning_curves(
     if out.suffix.lower() != ".png":
         raise ValueError(f"out must be a .png file, got {out}")
     fig = learning_curve_figure(experiments, baselines, title=title, ylabel=ylabel)
+    return _save_png(fig, out)
+
+
+def plot_value_curves(
+    experiments: Sequence[tuple[str, str | Path]],
+    out: str | Path,
+    which: str = "visited",
+    title: str | None = None,
+    ylabel: str = DEFAULT_VALUE_YLABEL,
+) -> Path:
+    """Draw the value estimates against the realised returns of
+    ``experiments`` (``(label, experiment directory)`` pairs) and save them as
+    a PNG (module docstring; :func:`value_curve_figure`). ``which`` is
+    ``"visited"`` or ``"start"`` (``aggregate.value_curve``). Same size,
+    overwrite and ``.png`` rules as :func:`plot_learning_curves`."""
+    out = Path(out)
+    if out.suffix.lower() != ".png":
+        raise ValueError(f"out must be a .png file, got {out}")
+    fig = value_curve_figure(experiments, which=which, title=title, ylabel=ylabel)
+    return _save_png(fig, out)
+
+
+def _save_png(fig: Figure, out: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, format="png", dpi=DPI)
     return out
@@ -333,10 +466,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                    help="EvalResult JSON files of non-learning players; default label: the file stem")
     p.add_argument("--out", required=True, metavar="FILE.png", help="the figure to write (overwritten if present)")
     p.add_argument("--title", default=None, metavar="T", help="figure title (default: none)")
-    p.add_argument("--ylabel", default=DEFAULT_YLABEL, metavar="TEXT", help="y axis label (default: %(default)r)")
+    p.add_argument("--ylabel", default=None, metavar="TEXT",
+                   help=f"y axis label (default: {DEFAULT_YLABEL!r}, with --values {DEFAULT_VALUE_YLABEL!r})")
+    p.add_argument("--values", action="store_true",
+                   help="the value figure: max-Q estimate (solid) against realised return (dashed) per experiment")
+    p.add_argument("--start", action="store_true",
+                   help="with --values: the first state of each episode instead of all visited states")
     args = p.parse_args(argv)
     if not args.exp:
         p.error("nothing to plot: give at least one --exp DIR[=LABEL]")
+    if args.start and not args.values:
+        p.error("--start only applies to the value figure (--values)")
+    if args.values and args.baseline:
+        p.error("the value figure has no baselines: drop --baseline or --values")
 
     experiments, baselines = [], []
     for arg in args.exp:
@@ -348,7 +490,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if any(not label for label, _ in experiments + baselines):
         p.error("empty label: write DIR=LABEL with a non-empty LABEL, or DIR alone")
 
-    print(plot_learning_curves(experiments, baselines, out=args.out, title=args.title, ylabel=args.ylabel))
+    if args.values:
+        ylabel = args.ylabel if args.ylabel is not None else DEFAULT_VALUE_YLABEL
+        which = "start" if args.start else "visited"
+        print(plot_value_curves(experiments, out=args.out, which=which, title=args.title, ylabel=ylabel))
+        return 0
+    ylabel = args.ylabel if args.ylabel is not None else DEFAULT_YLABEL
+    print(plot_learning_curves(experiments, baselines, out=args.out, title=args.title, ylabel=ylabel))
     return 0
 
 

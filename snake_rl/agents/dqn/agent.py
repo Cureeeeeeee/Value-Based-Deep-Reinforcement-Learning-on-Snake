@@ -117,7 +117,35 @@ excess backwards. Choosing with the online network and valuing with the target
 network means an action is no longer scored by the same errors that selected
 it. This is meant to reduce the overestimation; it cannot remove it, since
 the two networks are correlated (one is an old copy of the other). M7 measures
-the effect on Snake.
+the effect on Snake with the measurement of van Hasselt et al. (their figure
+3): at every evaluation the trainer records the mean of ``max_a Q(s, a)`` over
+the states the greedy policy visits and the discounted return the policy then
+actually collects from those states (``snake_rl.evaluate``, ``gamma``); the
+difference is the overestimation.
+
+Dueling head (``cfg.dueling``; Wang, Schaul et al. 2016)
+--------------------------------------------------------
+``networks.DuelingMLP``: ``Q(s, a) = V(s) + A(s, a) - mean_a' A(s, a')``,
+one stream for the state value and one for the advantages after shared
+layers. Nothing in the update changes - the agent sees a Q-network like any
+other - and the greedy action is unchanged by the decomposition (it is the
+argmax of ``A``). What changes is credit assignment inside the network: every
+transition from a state moves ``V(s)`` whatever action it stored, so the value
+of states where the action does not matter is learned from all of them. M7
+compares it with the plain head on the same budget.
+
+Prioritised replay (``cfg.per``; Schaul et al. 2016)
+----------------------------------------------------
+``replay.PrioritizedReplayBuffer`` samples transitions in proportion to
+``(|td| + eps) ** alpha``, the TD error they had when last trained on, so the
+regression spends its gradient steps where it is still wrong. That changes
+the sampling distribution, so each transition's loss is multiplied by an
+importance weight ``(n P(i)) ** (-beta)`` (normalised to at most 1), passed to
+:meth:`DQNAgent.update` as ``weights``; ``beta`` rises to 1 over the run, at
+which point the expected update is the uniform one again. After the step the
+new TD errors (``td_abs`` of the returned statistics) become the priorities.
+Not a stabiliser: a change of what is replayed, measured in M7 against
+uniform replay on the same budget.
 
 Relation to the tabular agent on the same features
 --------------------------------------------------
@@ -208,7 +236,9 @@ class DQNAgent:
         # generators out of it.)
         with torch.random.fork_rng(devices=[]):
             torch.default_generator.manual_seed(int(seed))
-            q_net = build_q_network(self.obs_shape, self.n_actions, self.cfg.hidden, self.cfg.conv_channels)
+            q_net = build_q_network(
+                self.obs_shape, self.n_actions, self.cfg.hidden, self.cfg.conv_channels, dueling=self.cfg.dueling
+            )
         self.q_net = q_net.to(self.device)
         self.target_net = copy.deepcopy(self.q_net)
         self.target_net.requires_grad_(False)  # only ever written by a copy of q_net
@@ -259,7 +289,7 @@ class DQNAgent:
         return np.where(explore, random_actions, greedy)
 
     # ----------------------------------------------------------- learning
-    def update(self, batch: Batch) -> dict[str, float]:
+    def update(self, batch: Batch, weights: np.ndarray | None = None) -> dict[str, Any]:
         """One gradient step on a batch of transitions (module docstring).
 
         ``batch.terminated`` is the environment's ``terminated`` flag only: a
@@ -267,8 +297,15 @@ class DQNAgent:
         bootstraps from ``batch.next_obs``, which must be the true successor
         (``info["final_obs"]``).
 
-        Returns ``loss``, ``mean_q`` (mean of ``q_sa``), ``mean_target`` and
-        ``grad_norm`` (global gradient norm before clipping) as Python floats.
+        ``weights`` (``(B,)`` floats, prioritised replay) multiply each
+        transition's Huber loss before the mean; ``None`` means all ones and
+        gives exactly the unweighted step.
+
+        Returns ``loss`` (the weighted loss that was minimised), ``mean_q``
+        (mean of ``q_sa``), ``mean_target`` and ``grad_norm`` (global
+        gradient norm before clipping) as Python floats, and, only when
+        ``weights`` is given, ``td_abs``: ``|q_sa - target|`` per transition
+        before the step, a float32 array ``(B,)`` (the new priorities' input).
         A non-finite loss or gradient norm raises ``FloatingPointError``
         before the optimiser step: the networks, the optimiser state and
         ``grad_steps`` are left as they were.
@@ -279,6 +316,11 @@ class DQNAgent:
         rewards = torch.as_tensor(batch.rewards, dtype=torch.float32, device=device)
         next_obs = torch.as_tensor(batch.next_obs, dtype=torch.float32, device=device)
         terminated = torch.as_tensor(batch.terminated, dtype=torch.bool, device=device)
+        if weights is not None:
+            weights = np.asarray(weights)
+            if weights.shape != (actions.shape[0],):
+                raise ValueError(f"weights must have shape ({actions.shape[0]},), got {weights.shape}")
+            weights = torch.as_tensor(weights, dtype=torch.float32, device=device)
 
         with torch.no_grad():  # the target is a constant of the regression
             next_q = self.target_net(next_obs)
@@ -292,17 +334,22 @@ class DQNAgent:
             target = rewards + cfg.gamma * next_value.masked_fill(terminated, 0.0)
 
         q_sa = self.q_net(obs).gather(1, actions.unsqueeze(1)).squeeze(1)
-        loss = F.smooth_l1_loss(q_sa, target, beta=1.0)  # Huber, mean over the batch
+        if weights is None:
+            loss = F.smooth_l1_loss(q_sa, target, beta=1.0)  # Huber, mean over the batch
+        else:  # importance-weighted Huber (prioritised replay)
+            loss = (weights * F.smooth_l1_loss(q_sa, target, beta=1.0, reduction="none")).mean()
 
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), cfg.grad_clip)
 
-        # One host transfer for all four statistics, taken before the step so
+        # One host transfer for all the statistics, taken before the step so
         # that a NaN / inf aborts with the weights still intact.
-        loss_value, mean_q, mean_target, norm_value = torch.stack(
-            (loss.detach(), q_sa.detach().mean(), target.mean(), grad_norm)
-        ).tolist()
+        stats = torch.stack((loss.detach(), q_sa.detach().mean(), target.mean(), grad_norm))
+        if weights is not None:
+            stats = torch.cat((stats, (q_sa.detach() - target).abs()))
+        values = stats.tolist()
+        loss_value, mean_q, mean_target, norm_value = values[:4]
         if not (math.isfinite(loss_value) and math.isfinite(norm_value)):
             raise FloatingPointError(
                 f"non-finite DQN update at gradient step {self.grad_steps + 1}: "
@@ -312,7 +359,10 @@ class DQNAgent:
         self.grad_steps += 1
         if self.grad_steps % cfg.target_update_every == 0:
             self.target_net.load_state_dict(self.q_net.state_dict())
-        return {"loss": loss_value, "mean_q": mean_q, "mean_target": mean_target, "grad_norm": norm_value}
+        result: dict[str, Any] = {"loss": loss_value, "mean_q": mean_q, "mean_target": mean_target, "grad_norm": norm_value}
+        if weights is not None:
+            result["td_abs"] = np.asarray(values[4:], dtype=np.float32)
+        return result
 
     # ---------------------------------------------------------------- I/O
     def save(self, path: str | Path, include_optimizer: bool = True) -> Path:

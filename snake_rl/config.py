@@ -46,6 +46,11 @@ which documents every field); its ``agent`` block, with the defaults::
       hidden: [256, 256]             # fully connected widths; [] = linear Q-function (observation A)
       conv_channels: [32, 64, 64]    # 3x3 convolutions for observation B; [] = none (M6)
       double: false                  # Double DQN target (M7)
+      dueling: false                 # Dueling head (M7)
+      per: false                     # prioritised replay (M7); needs replay: true
+      per_alpha: 0.6                 # priority exponent
+      per_beta_start: 0.4            # importance-sampling exponent at step 0 -> 1.0 at total_env_steps
+      per_eps: 1.0e-6                # added to |td| before the exponent
       keep_checkpoints: true         # weights-only checkpoint at every evaluation
       device: auto                   # auto | cpu | cuda
       torch_threads: null            # null -> torch's own setting
@@ -78,13 +83,16 @@ misspelt reward variant fails only at the first ``step``). Every error is a
   ``batch_size <= learning_starts <= train.total_env_steps``;
   ``grad_steps_per_vec_step`` and ``torch_threads`` null or ``>= 1``;
   ``target_update_every >= 1``; ``grad_clip > 0``; ``hidden`` and
-  ``conv_channels`` lists of positive integers (possibly empty); ``replay``
-  a boolean; ``device`` one of auto / cpu / cuda; gamma and the epsilon
-  schedule as for ``tabular_q``; observation A (MLP) or B (CNN);
+  ``conv_channels`` lists of positive integers (possibly empty); ``replay``,
+  ``double``, ``dueling`` and ``per`` booleans; ``per_alpha`` and
+  ``per_beta_start`` in ``[0, 1]``; ``per_eps > 0``; ``device`` one of auto /
+  cpu / cuda; gamma and the epsilon schedule as for ``tabular_q``;
+  observation A (MLP) or B (CNN);
 * ``dqn`` with ``replay: true``: ``buffer_size >= train.n_envs`` (a smaller
   buffer would drop part of every vec-step); with ``replay: false``:
   ``grad_steps_per_vec_step`` null or 1 (there is exactly one gradient step
-  per vec-step, on that step's own transitions);
+  per vec-step, on that step's own transitions) and ``per`` false
+  (prioritised replay is a way of sampling the buffer);
 * reward R2 needs ``env.reward.gamma == agent.gamma``: potential-based shaping
   (Ng et al. 1999) preserves the optimal policy only for the discount the
   agent actually uses;
@@ -466,6 +474,11 @@ def _dqn_config(s: _Section) -> DQNConfig:
         hidden=tuple(hidden),
         conv_channels=tuple(conv_channels),
         double=s.boolean("double", default.double),
+        dueling=s.boolean("dueling", default.dueling),
+        per=s.boolean("per", default.per),
+        per_alpha=s.number("per_alpha", default.per_alpha),
+        per_beta_start=s.number("per_beta_start", default.per_beta_start),
+        per_eps=s.number("per_eps", default.per_eps),
         keep_checkpoints=s.boolean("keep_checkpoints", default.keep_checkpoints),
         device=s.choice("device", default.device, DEVICES),
         torch_threads=s.optional_integer("torch_threads", default.torch_threads),
@@ -509,6 +522,15 @@ def _dqn_config(s: _Section) -> DQNConfig:
     _require(
         cfg.torch_threads is None or cfg.torch_threads >= 1,
         f"{s.key('torch_threads')} must be null or at least 1, got {cfg.torch_threads}",
+    )
+    _require(0 <= cfg.per_alpha <= 1, f"{s.key('per_alpha')} must be in [0, 1], got {cfg.per_alpha}")
+    _require(
+        0 <= cfg.per_beta_start <= 1, f"{s.key('per_beta_start')} must be in [0, 1], got {cfg.per_beta_start}"
+    )
+    _require(cfg.per_eps > 0, f"{s.key('per_eps')} must be positive, got {cfg.per_eps}")
+    _require(
+        cfg.replay or not cfg.per,
+        f"{s.key('per')} needs {s.key('replay')}: prioritised replay is a way of sampling the replay buffer",
     )
     return cfg
 

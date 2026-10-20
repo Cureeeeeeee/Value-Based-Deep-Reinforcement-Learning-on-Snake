@@ -56,6 +56,21 @@ class DQNConfig:
     conv_channels: tuple[int, ...] = (32, 64, 64)
     #: Double DQN target (van Hasselt et al. 2016); studied in M7.
     double: bool = False
+    #: Dueling head (Wang et al. 2016): ``Q = V + A - mean(A)`` with separate
+    #: value and advantage streams after the shared layers (``networks.DuelingMLP``).
+    dueling: bool = False
+    #: Prioritised experience replay (Schaul et al. 2016, proportional variant):
+    #: transitions are sampled with probability proportional to their priority
+    #: ``(|td| + per_eps) ** per_alpha`` and the loss is importance-weighted.
+    #: Needs ``replay``.
+    per: bool = False
+    #: Priority exponent alpha (0 = uniform replay with weights of one).
+    per_alpha: float = 0.6
+    #: Importance-sampling exponent beta at step 0; the training loop anneals it
+    #: linearly to 1.0 at ``train.total_env_steps`` (full correction at the end).
+    per_beta_start: float = 0.4
+    #: Added to |td| before the exponent, so that no transition has priority 0.
+    per_eps: float = 1e-6
     #: Training loop: write a weights-only checkpoint at every evaluation.
     keep_checkpoints: bool = True
     #: ``"auto"`` (cuda if available, else cpu) | ``"cpu"`` | ``"cuda"``.

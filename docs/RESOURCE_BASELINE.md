@@ -24,9 +24,9 @@
 |---|---|---|---|
 | M6 CNN（观测 B） | W9 Part D cell 13 `CustomCNN` | L2 | **已做（2026-10-20，`snake_rl/agents/dqn/networks.py::CNN`，docstring 记了出处和每处改动）。** 保留类骨架：`nn.Sequential` 卷积栈 → `Flatten` → 用一次 dummy forward 求 `n_flatten`（这段原样，dummy 输入用 `torch.zeros(1, *in_shape)` 代替 `observation_space.sample()`）→ `Linear(n_flatten, 512) → ReLU` 加 SB3 的 Q 头 `Linear(512, n_actions)` 合起来就是本仓库的 `MLP(n_flatten, n_actions, hidden=(512,))`，配置文件里 `hidden: [512]` 即 resource 的 `features_dim`。**只改卷积超参**使之适配小棋盘（3 层 3×3、stride 1、padding 1，通道 32/64/64，无池化）。基类不用 SB3 的 `BaseFeaturesExtractor`，改为 `nn.Module`（本仓库不依赖 SB3）。 |
 | M6 ±replay ±target 消融 | W9 Part B `SimpleDQN`（`deque` 回放、`target_model` 每局同步） | 概念参照，无代码复用 | **已做（L3）**：`agent.replay: false` 开关在 `train.py`（每个 vec-step 用自己的转移做 1 次梯度更新）；`target_update_every: 1` 即无目标网络（M5 已有）。报告里可以把 W9 Part B 的写法当作课程里的参照实现 |
-| M7 Double DQN | W8 `double_q_learning` | 已实现，不改 | `agent.py` 第 282 行起已有 `cfg.double`（在线网络选动作、目标网络评估）。它对应 W8 的更新行 `best_next_action = argmax(Q1[s']); TD_target = r + γ·Q2[s', best_next_action]`，报告引用这一对应关系 |
-| M7 过估计测量 | 无 | L3 | — |
-| M7 Dueling、PER | 无 | L3 | 砍单顺序不变：PER → Dueling |
+| M7 Double DQN | W8 `double_q_learning` | 已实现，不改 | `agent.py` 的 `update` 已有 `cfg.double`（在线网络选动作、目标网络评估）。它对应 W8 的更新行 `best_next_action = argmax(Q1[s']); TD_target = r + γ·Q2[s', best_next_action]`，报告引用这一对应关系 |
+| M7 过估计测量 | 无 | L3 | **已做（2026-10-20）**：`snake_rl/evaluate.py` 的 `gamma` 参数（每步记 `max_a Q` 与实际折扣回报），`train.py` 每次评估写 4 列 `eval_value_* / eval_return_*`，`scripts/backfill_values.py` 从旧 run 的 checkpoint 补算，`aggregate.value_curve` + `plots --values` 出图 |
+| M7 Dueling、PER | 无 | L3 | **已做（2026-10-20）**：`networks.DuelingMLP`（`# NEW` 标注）、`replay.PrioritizedReplayBuffer`（无 sum tree，见 docstring）。砍单顺序不变：PER → Dueling |
 | M9 GUI | W8 Part C / W9 Part B 的 `run_game`（人类输入 → `env.step` → `render` 的回合循环，人机对战） | 模式参照 | "人玩"和"agent 玩"两种模式的主循环照 `run_game` 的结构组织；pygame 渲染与 Q 值侧栏是 L3 |
 | M10 Colab notebook | 各 resource notebook 的安装格；W9 Part C 的 `plot_results` | L1 / 参照 | 安装格照 resource 写法（`!pip install ...`）；主图仍由 `snake_rl/analysis/` 生成（M5 已冻结的 CI 带画法不改） |
 | CUDA 检查 | W8/W9 `check_cuda()` | — | M0 已有 `scripts/check_env.py`，不替换 |

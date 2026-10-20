@@ -670,10 +670,14 @@ def test_metadata_is_filled_like_evaluate(monkeypatch):
 
 
 def test_default_arguments_are_the_evaluation_protocol():
-    params = inspect.signature(evaluate_batched).parameters
-    assert list(params) == ["policy", "cfg", "n_episodes", "seed"]
-    assert params["n_episodes"].default == 100
-    assert params["seed"].default == DEFAULT_EVAL_SEED == 10_000
+    # M7 (D5): both protocols take ``gamma=None`` last; the other defaults are unchanged. With ``gamma``
+    # the value estimates are recorded (``tests/test_m7_eval_values.py``); without it nothing changes.
+    for protocol in (evaluate, evaluate_batched):
+        params = inspect.signature(protocol).parameters
+        assert list(params) == ["policy", "cfg", "n_episodes", "seed", "gamma"], protocol.__name__
+        assert params["n_episodes"].default == 100
+        assert params["seed"].default == DEFAULT_EVAL_SEED == 10_000
+        assert params["gamma"].default is None
     result = evaluate_batched(AlwaysStraight(), EnvConfig(W=8))
     assert result.seed == DEFAULT_EVAL_SEED
     assert [e.seed for e in result.episodes] == list(range(10_000, 10_100))

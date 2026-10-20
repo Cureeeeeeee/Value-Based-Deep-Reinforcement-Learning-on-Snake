@@ -23,6 +23,28 @@ first ``n_episodes`` episodes to finish" instead would over-represent short
 episodes (a board that dies early contributes again and again while a long
 episode is still running) and bias the mean score downwards.
 
+Value estimates against realised returns (M7; van Hasselt et al. 2016)
+----------------------------------------------------------------------
+With ``gamma`` given, both functions also record, for a policy that exposes
+``q_values(obs) -> (N, n_actions)``, what the network claims and what the
+policy then collects. For every step ``t`` of a recorded episode,
+``v_t = max_a Q(s_t, a)`` is the value estimate of the state the action is
+chosen from (for a greedy policy ``Q(s_t, a_t)``), ``r_t`` the reward the
+environment returns (the training reward of ``cfg.reward``), and after the
+episode ``G_t = r_t + gamma * G_{t+1}`` with ``G_T = 0`` is the realised
+discounted return from ``s_t``. ``G`` stops at the end of the episode
+whether it terminated or was truncated by starvation: it is what the policy
+actually collected, with no bootstrap; at gamma 0.9 the tail beyond the
+100-step starvation limit weighs under 3e-5 in any case. Per episode the
+record keeps ``value_start = v_0``, ``return_start = G_0`` and the means of
+``v_t`` and ``G_t`` over the episode's steps (``value_visited``,
+``return_visited``); ``EvalResult.value_summary`` averages them over the
+episodes, the visited-state pair weighted by episode length, so that it is
+the mean over all visited states. The difference ``value - return`` is the
+overestimation the Double DQN study measures. In the batched protocol the
+action values come from one ``q_values`` call per vec-step on the whole
+batch, before ``act_batch`` chooses the actions.
+
 CLI::
 
     python -m snake_rl.evaluate --policy random bfs hamiltonian --W 10 --episodes 100
@@ -50,6 +72,8 @@ from snake_rl.env.vec_env import VecSnakeEnv
 from snake_rl.utils import git_hash
 
 DEFAULT_EVAL_SEED = 10_000
+#: The per-episode value fields (M7), present only when evaluated with ``gamma``.
+VALUE_FIELDS = ("value_start", "return_start", "value_visited", "return_visited")
 
 
 @dataclass(frozen=True)
@@ -59,6 +83,14 @@ class EpisodeRecord:
     steps: int
     length: int
     cause: str
+    #: ``max_a Q(s_0, a)`` of the first state (M7; ``None`` without ``gamma``).
+    value_start: float | None = None
+    #: Realised discounted return from the first state.
+    return_start: float | None = None
+    #: Mean of ``max_a Q(s_t, a)`` over the episode's steps.
+    value_visited: float | None = None
+    #: Mean of the realised discounted return ``G_t`` over the episode's steps.
+    return_visited: float | None = None
 
 
 @dataclass
@@ -108,17 +140,41 @@ class EvalResult:
             "cause_fractions": self.cause_fractions,
         }
 
+    def value_summary(self) -> dict[str, float] | None:
+        """The value estimates against the realised returns (module docstring).
+
+        ``value_start`` / ``return_start``: means over the episodes of the
+        first-state quantities. ``value_visited`` / ``return_visited``: means
+        over all visited states (the per-episode means weighted by the
+        episode's steps). ``None`` when there are no episodes or an episode
+        was evaluated without ``gamma``.
+        """
+        if not self.episodes or any(getattr(e, name) is None for e in self.episodes for name in VALUE_FIELDS):
+            return None
+        steps = self.steps
+        total_steps = float(steps.sum())
+        return {
+            "value_start": float(np.mean([e.value_start for e in self.episodes])),
+            "return_start": float(np.mean([e.return_start for e in self.episodes])),
+            "value_visited": float(np.dot([e.value_visited for e in self.episodes], steps) / total_steps),
+            "return_visited": float(np.dot([e.return_visited for e in self.episodes], steps) / total_steps),
+        }
+
     # --------------------------------------------------------------- I/O
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "policy": self.policy,
             "env": self.env,
             "seed": self.seed,
             "git": self.git,
             "wall_time_s": self.wall_time_s,
             "summary": self.summary(),
-            "episodes": [asdict(e) for e in self.episodes],
         }
+        values = self.value_summary()
+        if values is not None:
+            d["values"] = values
+        d["episodes"] = [_episode_dict(e) for e in self.episodes]
+        return d
 
     def save(self, path: str | Path) -> Path:
         path = Path(path)
@@ -139,6 +195,16 @@ class EvalResult:
         )
 
 
+def _episode_dict(e: EpisodeRecord) -> dict[str, Any]:
+    """The JSON form of a record: the value fields only when present, so a
+    file written without ``gamma`` is what it was before M7."""
+    d = asdict(e)
+    for name in VALUE_FIELDS:
+        if d[name] is None:
+            del d[name]
+    return d
+
+
 def env_config_to_dict(cfg: EnvConfig) -> dict[str, Any]:
     return asdict(cfg)
 
@@ -153,8 +219,42 @@ def env_config_from_dict(d: dict[str, Any]) -> EnvConfig:
     )
 
 
-def evaluate(policy, cfg: EnvConfig, n_episodes: int = 100, seed: int = DEFAULT_EVAL_SEED) -> EvalResult:
-    """Play ``n_episodes`` greedy episodes; episode ``i`` uses ``reset(seed=seed + i)``."""
+# ------------------------------------------------------- value bookkeeping
+def _check_gamma(policy, gamma: float | None) -> None:
+    if gamma is None:
+        return
+    if isinstance(gamma, bool) or not isinstance(gamma, (int, float, np.floating)) or not 0.0 <= gamma <= 1.0:
+        raise ValueError(f"gamma must be None or a number in [0, 1], got {gamma!r}")
+    if not callable(getattr(policy, "q_values", None)):
+        raise TypeError(
+            f"value estimates need a policy with q_values(obs) -> (N, n_actions); {type(policy).__name__} has none"
+        )
+
+
+def _value_fields(values: list[float], rewards: list[float], gamma: float) -> dict[str, float]:
+    """The four per-episode value fields from the per-step ``max_a Q`` and rewards."""
+    returns = np.empty(len(rewards), dtype=np.float64)
+    g = 0.0
+    for t in range(len(rewards) - 1, -1, -1):  # G_t = r_t + gamma * G_{t+1}, G_T = 0
+        g = rewards[t] + gamma * g
+        returns[t] = g
+    return {
+        "value_start": float(values[0]),
+        "return_start": float(returns[0]),
+        "value_visited": float(np.mean(values)),
+        "return_visited": float(returns.mean()),
+    }
+
+
+def evaluate(
+    policy, cfg: EnvConfig, n_episodes: int = 100, seed: int = DEFAULT_EVAL_SEED, gamma: float | None = None
+) -> EvalResult:
+    """Play ``n_episodes`` greedy episodes; episode ``i`` uses ``reset(seed=seed + i)``.
+
+    With ``gamma`` the records also carry the value estimates against the
+    realised returns (module docstring); the policy must have ``q_values``.
+    """
+    _check_gamma(policy, gamma)
     env = SnakeEnv(cfg)
     result = EvalResult(policy=policy.name, env=env_config_to_dict(cfg), seed=seed, git=git_hash())
     t0 = time.perf_counter()
@@ -163,18 +263,30 @@ def evaluate(policy, cfg: EnvConfig, n_episodes: int = 100, seed: int = DEFAULT_
         obs, info = env.reset(seed=ep_seed)
         if hasattr(policy, "reset"):
             policy.reset()
+        values: list[float] = []
+        rewards: list[float] = []
         while True:
-            obs, _, terminated, truncated, info = env.step(policy.act(obs, env))
+            if gamma is not None:
+                values.append(float(policy.q_values(obs[None])[0].max()))
+            obs, reward, terminated, truncated, info = env.step(policy.act(obs, env))
+            if gamma is not None:
+                rewards.append(float(reward))
             if terminated or truncated:
                 break
+        extra = _value_fields(values, rewards, gamma) if gamma is not None else {}
         result.episodes.append(
-            EpisodeRecord(seed=ep_seed, score=info["score"], steps=info["steps"], length=info["length"], cause=info["cause"])
+            EpisodeRecord(
+                seed=ep_seed, score=info["score"], steps=info["steps"], length=info["length"], cause=info["cause"],
+                **extra,
+            )
         )
     result.wall_time_s = time.perf_counter() - t0
     return result
 
 
-def evaluate_batched(policy, cfg: EnvConfig, n_episodes: int = 100, seed: int = DEFAULT_EVAL_SEED) -> EvalResult:
+def evaluate_batched(
+    policy, cfg: EnvConfig, n_episodes: int = 100, seed: int = DEFAULT_EVAL_SEED, gamma: float | None = None
+) -> EvalResult:
     """Greedy evaluation on the vectorised env: the first episode of each of
     ``n_episodes`` sub-envs, sub-env ``i`` seeded ``seed + i``.
 
@@ -183,10 +295,13 @@ def evaluate_batched(policy, cfg: EnvConfig, n_episodes: int = 100, seed: int = 
     the result then equals ``evaluate(policy, cfg, n_episodes, seed)`` episode
     by episode (see the module docstring). Episodes are ordered by ``i``.
     ``policy.reset()``, if it exists, is called once before the first step
-    (all first episodes start together).
+    (all first episodes start together). With ``gamma`` (module docstring)
+    the policy must also have ``q_values``; it is called once per vec-step on
+    the whole batch, before ``act_batch``.
     """
     if n_episodes < 1:
         raise ValueError(f"n_episodes must be at least 1, got {n_episodes}")
+    _check_gamma(policy, gamma)
     env = VecSnakeEnv(cfg, n_envs=n_episodes, seed=seed)
     result = EvalResult(policy=policy.name, env=env_config_to_dict(cfg), seed=seed, git=git_hash())
     t0 = time.perf_counter()
@@ -199,16 +314,29 @@ def evaluate_batched(policy, cfg: EnvConfig, n_episodes: int = 100, seed: int = 
     keys = ("score", "steps", "length", "cause")
     first = {key: np.zeros(n_episodes, dtype=np.int64) for key in keys}
     pending = np.ones(n_episodes, dtype=bool)  # first episode still running
+    step_values: list[np.ndarray] = []  # per vec-step: max_a Q of every sub-env (with gamma)
+    step_rewards: list[np.ndarray] = []
     while pending.any():
-        obs, _, _, _, info = env.step(policy.act_batch(obs))
+        if gamma is not None:
+            step_values.append(policy.q_values(obs).max(axis=1))
+        obs, reward, _, _, info = env.step(policy.act_batch(obs))
+        if gamma is not None:
+            step_rewards.append(np.asarray(reward, dtype=np.float64))
         ended = pending & info["done"]
         for key in keys:
             first[key][ended] = info[key][ended]
         pending &= ~ended
     columns = [first[key].tolist() for key in keys]  # Python ints: JSON-serialisable
+    if gamma is not None:
+        all_values = np.stack(step_values)  # (vec-steps, n_episodes)
+        all_rewards = np.stack(step_rewards)
     for i, (score, steps, length, cause) in enumerate(zip(*columns)):
+        extra = {}
+        if gamma is not None:
+            # The first episode of sub-env i occupies its first ``steps`` vec-steps.
+            extra = _value_fields(all_values[:steps, i].tolist(), all_rewards[:steps, i].tolist(), gamma)
         result.episodes.append(
-            EpisodeRecord(seed=seed + i, score=score, steps=steps, length=length, cause=CAUSE_NAMES[cause])
+            EpisodeRecord(seed=seed + i, score=score, steps=steps, length=length, cause=CAUSE_NAMES[cause], **extra)
         )
     result.wall_time_s = time.perf_counter() - t0
     return result

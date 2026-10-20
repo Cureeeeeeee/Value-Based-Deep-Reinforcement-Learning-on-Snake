@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-**M6：代码与 8×8 全部结果完成（2026-10-20，代码 `d81a7f3`，结果经独立审查），10×10 的批次等用户在独立终端启动 → 跑完填"M6 验收"的 10×10 段、出图 → M7**。M0–M2 完成于 2026-09-30，M3、M4 于 2026-10-04，M5 和 Part C 文档于 2026-10-05，M9（GUI）和 Part D 文档于 2026-10-12（M9 提前到 M6 之前做，原因见"偏离 Part B 的记录"），M6 于 2026-10-20。**用户要做的（10×10，按顺序，每条约 45–60 分钟，GPU 饱和，一次只跑一条；`runs/_interrupted/dqn_B8_W10_killed_857k_2026-10-20/` 是被系统内存不足中断的主批次，已移出，不要动）**：
+**M7：代码完成（2026-10-20，分支 `m7` 合并进 main），过估计测量在已有 run 上回填并出图（"M7 验收"）；M7 的 Double / Dueling / PER 批次和 M6 的 10×10 批次都等用户在独立终端启动 → 跑完填"M6 验收"的 10×10 段和"M7 验收"的 Double 段 → M8**。M6：代码与 8×8 全部结果完成（2026-10-20，代码 `d81a7f3`，结果经独立审查）。M0–M2 完成于 2026-09-30，M3、M4 于 2026-10-04，M5 和 Part C 文档于 2026-10-05，M9（GUI）和 Part D 文档于 2026-10-12（M9 提前到 M6 之前做，原因见"偏离 Part B 的记录"），M6 于 2026-10-20。**用户要做的（10×10，按顺序，每条约 45–60 分钟，GPU 饱和，一次只跑一条；`runs/_interrupted/dqn_B8_W10_killed_857k_2026-10-20/` 是被系统内存不足中断的主批次，已移出，不要动）**：
 
 ```powershell
 .venv\Scripts\activate
@@ -19,7 +19,23 @@ python scripts/run_matrix.py --config configs/dqn_A_10x10.yaml --seeds 0 1 2 3 4
 python scripts/run_matrix.py --config configs/dqn_A_10x10.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W10_notarget --set agent.target_update_every=1
 ```
 
-（前四条是主结果和观测轴，后面是组件轴；无回放的行按 8×8 的教训以 `t31` 为主。`run_matrix` 跳过已完成的 run、拒绝未完成的：再次中断就把未完成的目录移到 `runs/_interrupted/` 再跑同一条。跑的时候别开占内存的程序：每个进程 1.5–1.8 GB，这台机器在 10 个进程时只剩 0.4 GB。）跑完后用会话临时目录里的 `m6_tables.sh 10` / `m6_analysis.py 10`（或照 8×8 的命令手工）出表出图，填进"M6 验收"的 10×10 段。Part D 成品 `..\43008-Project-Part-D-TheDeadlyTriad.docx`（4 页，套用课程模板；同目录有 LibreOffice 渲染的 PDF 预览），正文源文件 `docs/PartD-environment-gui.md`，详见下方"Part D"一节。Part C 成品 `..\43008-Project-Part-C-TheDeadlyTriad.docx`（源 `docs/PartC-initial-results.md`）；Part C 是否已提交，本仓库没有记录。**提交前用户要做**：（1）仓库在 2026-10-12 仍是 PRIVATE（`gh repo view` 核实），两份文档里的仓库链接批改人打不开——公开仓库或把课程协调人加为协作者；（2）用 Word 打开确认页数（我只用 LibreOffice 渲染过）；（3）push。之后是 M6（CNN on 观测 B；±replay ±target 消融），开工前先读 `docs/RESOURCE_BASELINE.md` 和"待拍板"表里标（M6）的各行。
+M7 的批次（8×8，每条 5 种子；A 的三条在 CPU 上各约 5 分钟，可以和一条 GPU 批次同时跑；B 的五条在 GPU 上各约 25–36 分钟，一次只跑一条；顺序按报告需要：先 `_double`，PER 最后）：
+
+```powershell
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_double --set agent.double=true
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_gamma099_double --set agent.double=true agent.gamma=0.99
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_dueling --set agent.dueling=true
+python scripts/run_matrix.py --config configs/dqn_A_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_A_W8_per --set agent.per=true
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_double --set agent.double=true
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_gamma099 --set agent.gamma=0.99
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_gamma099_double --set agent.double=true agent.gamma=0.99
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_dueling --set agent.dueling=true
+python scripts/run_matrix.py --config configs/dqn_B_8x8.yaml --seeds 0 1 2 3 4 --jobs 5 --exp-prefix dqn_B8_W8_per --set agent.per=true
+```
+
+跑完后出过估计图和表：`python -m snake_rl.analysis.plots --values --exp runs/dqn_B8_W8=DQN runs/dqn_B8_W8_double="Double DQN" --out runs/figures/m7_W8_values_double_B8.png`（A 同理；γ=0.99 的一对最能看出差别），得分表仍用 `aggregate --last-k 5`；会话临时目录的 `m7_values.py <exp> ...` 打印最后 5 / 10 次评估的估计、回报、差和比值。
+
+（M6 的前四条是主结果和观测轴，后面是组件轴；无回放的行按 8×8 的教训以 `t31` 为主。`run_matrix` 跳过已完成的 run、拒绝未完成的：再次中断就把未完成的目录移到 `runs/_interrupted/` 再跑同一条。跑的时候别开占内存的程序：每个进程 1.5–1.8 GB，这台机器在 10 个进程时只剩 0.4 GB。）跑完后用会话临时目录里的 `m6_tables.sh 10` / `m6_analysis.py 10`（或照 8×8 的命令手工）出表出图，填进"M6 验收"的 10×10 段。Part D 成品 `..\43008-Project-Part-D-TheDeadlyTriad.docx`（4 页，套用课程模板；同目录有 LibreOffice 渲染的 PDF 预览），正文源文件 `docs/PartD-environment-gui.md`，详见下方"Part D"一节。Part C 成品 `..\43008-Project-Part-C-TheDeadlyTriad.docx`（源 `docs/PartC-initial-results.md`）；Part C 是否已提交，本仓库没有记录。**提交前用户要做**：（1）仓库在 2026-10-12 仍是 PRIVATE（`gh repo view` 核实），两份文档里的仓库链接批改人打不开——公开仓库或把课程协调人加为协作者；（2）用 Word 打开确认页数（我只用 LibreOffice 渲染过）；（3）push。之后是 M6（CNN on 观测 B；±replay ±target 消融），开工前先读 `docs/RESOURCE_BASELINE.md` 和"待拍板"表里标（M6）的各行。
 
 ## 里程碑清单
 
@@ -32,7 +48,7 @@ python scripts/run_matrix.py --config configs/dqn_A_10x10.yaml --seeds 0 1 2 3 4
 | M4 | 表格 Q-learning（观测 A） | ✅ 2026-10-04 | `pytest`：890 passed，41 s。验收达成：8×8 上 5 种子 15.67 ± 0.87，random 0.23（约 68×），单个 run 约 6 s。10×10：18.51 ± 1.10（random 0.18，BFS 30.61）。ε/α/γ 起点：α=0.1、γ=0.9、ε 1.0→0.05（前 20% 步数）。表：`runs/tables/m4_W8.md`、`m4_W10.md`；run：`runs/tabular_q_W8/`、`runs/tabular_q_W10/`（git `c801fff`）。详见下方"M4 验收" |
 | M5 | DQN 核心（MLP on A）+ 评估协议 + 日志/checkpoint | ✅ 2026-10-05 | `pytest`：1237 passed，约 55 s。验收达成：DQN-A 在 8×8 上 16.11 ± 0.88（表格 Q 15.67 ± 0.87，分不出高下），在 10×10 上 20.29 ± 1.55（表格 Q 18.51 ± 1.10，DQN 更高）；首条评估曲线 `runs/figures/m5_W10_curve.png`、`m5_W8_curve.png`。表：`runs/tables/m5_W10_all.md`、`m5_W8_all.md`；run：`runs/dqn_A_W10/`、`runs/dqn_A_W8/`（git `0b4666c`）。**解读上的重要限定见下方“M5 验收”**。→ Part C 可交 |
 | M6 | CNN on B（8 平面 / 3 平面）；±replay ±target 消融 | ✅ 代码与 8×8 2026-10-20（`d81a7f3`）；🔶 10×10 批次等用户启动 | 代码：`networks.CNN`（按 resource 的 `CustomCNN` 改）、`agent.replay` 开关、`aborted.json`、`scripts/bench_update.py`、3 个 B 配置；全量 1399 项测试通过。验收（8×8，5 种子，经独立审查复算）：B8 比 A 高 +1.71 [+1.26, +2.15]（配对）；年龄平面 \|作用\| < 1 分，方向平面 −4.3；去掉目标网络略好（最后 10 次 +0.47 [+0.17, +0.78]）；去掉回放 −9.3，拆成目标网络过时、无混合、更新次数三个都可测的因素（拆分依赖路径）。四条消融曲线和观测轴曲线在 `runs/figures/m6_W8_*.png`。10×10：主批次 84% 处被系统内存不足中断，预览见"M6 验收" |
-| M7 | Double DQN + 过估计测量；Dueling；PER | ☐ | PER 最先砍 |
+| M7 | Double DQN + 过估计测量；Dueling；PER | ✅ 代码 2026-10-20（分支 `m7`）；🔶 批次等用户启动 | 代码：过估计测量（`evaluate(..., gamma)`，每次评估 4 列 `eval_value_* / eval_return_*`，`scripts/backfill_values.py` 给旧 run 补算，`aggregate.value_curve`，`plots --values`）、`networks.DuelingMLP`、`replay.PrioritizedReplayBuffer`、`agent.update(batch, weights)`；配置开关 `agent.dueling / per`。验收"过估计曲线出图"已用回填的 6 个实验完成：`runs/figures/m7_W8_values_*.png`、`m7_W10_values_dqn.png`——DQN 沿访问状态高估 0.25（A）/ 0.30（B8），γ=0.99 下 +6.4（2.1 倍）且到 512k 步仍在涨；首状态反而低估（A）。Double / Dueling / PER 的得分与高估对比等 `*_double / *_dueling / *_per` 批次（命令见"当前里程碑"）。PER 最先砍 |
 | M8 | 奖励轴 R0–R3 + 行为分析 | ☐ | |
 | M9 | pygame GUI 三模式 | ✅ 2026-10-12 | `pytest`：1293 passed（+56，`tests/test_gui.py`，无头 SDL dummy 驱动，4 s）。验收达成：人玩（方向键 / WASD；默认逐步、Space 实时；可挂"顾问"agent 显示其 Q 值）+ agent 玩（基线 / Q 表 / 任意 DQN checkpoint；实时三动作 Q 值条形图与所选动作、观测 A 的 11 位、分数 / 饥饿计数 / 回报 / 本会话死因统计）+ 回放（JSON 录像 = 环境配置 + 种子 + 动作序列 + 每步 Q 值，重新模拟）。真实窗口冒烟通过。截图：`python scripts/gui_screenshots.py` → `runs/figures/partD_gui_*.png`。→ Part D 已交付。详见下方"M9 实现层面的决定" |
 | M10 | 矩阵批量（5 种子）、`analysis/` 全部图表、Colab notebook | ☐ | → Part E |
@@ -452,6 +468,51 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | 冒烟配置 | 16/32 通道、128 单元、48k 步、CPU 单线程约 45 s，终局 9.65（种子 0）；测试门槛 > 5 | 8/8 通道 32 单元的版本学不到东西 |
 | 批次由我在后台跑 | 用户没有在线；按 M5 的先例在后台跑并在本文件记录命令。CNN 批次 GPU 饱和，串行排队 | 超过 `CLAUDE.md` 的 10 分钟线，已在对话里说明 |
 
+## M7 验收（2026-10-20 起；代码完成，Double / Dueling / PER 批次等用户启动）
+
+**做了什么（代码；分支 `m7`，与实现独立编写的测试见"测试有效性"）**：
+
+- **过估计测量**（Part B："the mean max-Q versus realised-return overestimation measurement logged throughout training"；van Hasselt et al. 2016 图 3 的量）：`evaluate` / `evaluate_batched` 多一个 `gamma` 参数，给了就在每局每一步记 `v_t = max_a Q(s_t, a)` 和环境返回的奖励，局终后算实际折扣回报 `G_t = r_t + γ G_{t+1}`（`G_T = 0`，饥饿截断也不 bootstrap——这是策略实际拿到的回报）。每局记 4 个数：首状态的 `v_0`、`G_0`，以及沿访问状态的均值；`EvalResult.value_summary()` 跨局平均（访问状态的一对按局长加权 = 对全部访问状态取平均）。DQN 的每次评估都带 γ，`metrics.csv` 多 4 列 `eval_value_start / eval_return_start / eval_value_visited / eval_return_visited`，`final_eval.json` 多 `values` 块；没给 γ 的评估（表格 Q、基线）文件逐字节不变。M7 之前训练的 run 用 `scripts/backfill_values.py` 从 `checkpoints/` 补算成 `values.csv`（每行的 `eval_mean_score` 必须与 `metrics.csv` 同一步的行完全相等，脚本核对——下面 6 个实验 × 5 种子 × 41–81 个 checkpoint 全部相等，顺便证明了 checkpoint ↔ 评估行的对应是精确的）。`aggregate.value_curve(exp, which)` 跨种子汇总估计、回报和差（gap = 估计 − 回报，每种子一个数，t 区间）；`plots --values` 出图：实线 = max-Q 估计，虚线 = 实际回报，同色同实验。
+- **Dueling**（`networks.DuelingMLP`，L3）：`Q = V + A − mean_a A`（Wang et al. 2016 式 9）。`hidden[:-1]` 共享，最后一个宽度每个流各一份：A 上 11→256 共享、两个流 256→256→{1,3}；B 上卷积共享、两个流 6400→512→{1,3}（10×10 上参数从 334 万翻到 660 万，因为 `Linear(6400,512)` 占 98%；GPU 上单次更新耗时几乎不变 `[INFERRED, HIGH]`——M6 基准显示它是调用开销）。`agent.dueling: true` 开关，`build_q_network` 分派。
+- **PER**（`replay.PrioritizedReplayBuffer`，L3；Schaul et al. 2016 比例变体）：优先级 `(|δ| + ε)^α`，新转移取历史最大优先级；分层采样（把总质量切成 batch_size 段各抽一点）；IS 权重 `(N·P(i))^−β` 按整个 buffer 的最大值归一化（= `(p_i / p_min)^−β`）；β 从 `per_beta_start` 线性升到 1（在 `total_env_steps` 处）。`agent.update(batch, weights)` 对每条的 Huber 损失乘权重后取均值，并返回 `td_abs`（更新前的 |δ|）供写回优先级。**没有 sum tree**：100k 容量下一次 `cumsum` 约 0.1 ms，实测一次采样 + 写回 0.51 ms（均匀采样 0.21 ms；差的 0.3 ms 对 GPU 上 2.6 ms 的更新是 +12%），比按 batch 写 Python 循环的树快，代码也只有几十行。
+- 配置：`DQNConfig` 多 `dueling / per / per_alpha / per_beta_start / per_eps`；校验 `per` 需要 `replay`；4 个批次配置写出了这些字段，头注释列了 M7 的 `--set` 命令。
+
+**过估计：已完成的 run（M7 之前训练的，回填；R0，5 种子；图 `runs/figures/m7_W8_values_dqn.png`（访问状态）、`m7_W8_values_dqn_start.png`（首状态）、`m7_W8_values_gamma.png`（γ=0.9 对 0.99）、`m7_W10_values_dqn.png`）**：
+
+| 实验 | γ | 访问状态：估计 / 回报 / **差**（最后 5 次评估的平均，t 区间） | 比值 | 首状态：估计 / 回报 / 差 |
+|---|---|---|---|---|
+| `dqn_A_W8`（MLP，8×8） | 0.9 | 1.545 ± 0.031 / 1.295 ± 0.009 / **+0.250 ± 0.024** | 1.19 | 1.466 / 1.675 / **−0.209 ± 0.030** |
+| `dqn_A_W8_notarget` | 0.9 | 1.519 ± 0.017 / 1.280 ± 0.013 / +0.239 ± 0.021 | 1.19 | 1.472 / 1.671 / −0.199 ± 0.021 |
+| `dqn_A_W8_gamma099` | 0.99 | 11.51 ± 0.09 / 5.37 ± 0.05 / **+6.14 ± 0.13** | 2.14 | 11.55 / 9.49 / +2.05 ± 0.14 |
+| `dqn_B8_W8`（CNN，8×8） | 0.9 | 1.470 ± 0.026 / 1.166 ± 0.017 / **+0.304 ± 0.026** | 1.26 | 1.763 / 1.594 / +0.169 ± 0.038 |
+| `dqn_B8_W8_notarget` | 0.9 | 1.457 ± 0.019 / 1.163 ± 0.007 / +0.294 ± 0.018 | 1.25 | 1.741 / 1.593 / +0.148 ± 0.035 |
+| `dqn_A_W10`（MLP，10×10） | 0.9 | 1.277 ± 0.028 / 1.080 ± 0.010 / **+0.197 ± 0.020** | 1.18 | 1.180 / 1.328 / −0.148 ± 0.022 |
+
+能说的：
+1. **DQN 在这个任务上确实高估**：沿贪心策略访问的状态，网络的 `max_a Q` 比实际折扣回报高 0.25（A）/ 0.30（B8）/ 0.20（A，10×10），每个实验 5/5 种子同向，区间远离零；与 M5 审查在新棋盘上量的 "1.51–1.57 对 1.28–1.30" 一致。**γ=0.99 时差距是 +6.1（2.1 倍），而且估计到 512k 步还在直线上升**（64k 步 2.4 → 256k 8.1 → 512k 11.8，回报一直是 5.4）——得分没有受影响（M5：15.91 对 16.11），但值已经离实际回报越来越远。这条曲线是 Double DQN 对照最该跑的地方（`dqn_A_W8_gamma099_double`）。`[INFERRED, MED]` 原因：γ=0.99 下 bootstrap 链长 100 步，argmax 的正偏差沿链累积；γ=0.9 下 10 步内就衰减掉了。
+2. **高估的位置依赖**：对 A，**首状态是低估的**（1.47 对 1.67，−0.21，5/5 种子），访问状态平均却是高估的；10×10 同样（−0.15 对 +0.20）。`[INFERRED, MED]` 原因：首状态离死亡最远（回报最高），而访问状态的平均里有大量临近死亡的状态，这些状态的实际回报含 −1 的折扣，网络给的值却接近正常状态——高估集中在"离死不远但观测 A 看不出来"的状态上，与 A 丢掉身体布局的事实一致（M5 第 7 点：所有死亡都发生在三个动作全部致死的位置，而这种位置在 A 的 11 位里和安全位置长得一样，直到最后一步）。B8 的首状态也高估（+0.17），比访问状态少。报告里要把"过估计"按首状态 / 访问状态两种口径都给，不只报一个均值；van Hasselt 的图用的是访问状态。
+3. **目标网络对高估没有可测作用**：B8 去掉目标网络后差是 +0.294 对 +0.304，A 上 +0.239 对 +0.250（配对差都在 ±0.02 以内，符号混杂）。目标网络冻结的是回归目标，不是 argmax 的偏差，这个零结果在预期之内。学习早期的高估峰不同：B8 无目标网络在 25.6k 步时差 +0.96（有目标网络 −0.04）——目标网络延迟了价值的传播，同时也延迟了高估的出现。
+4. **曲线的形状**：A（8×8）上估计在 ε 降到底附近（102k 步）冲到 1.73（回报 1.28，差 +0.45），之后回落到 +0.25；10×10 上同样在 190k（ε 到底在 205k）到峰值 1.59 后回落到 1.28，而回报始终是 1.08。**M5 第 5 点留下的问题（10×10 的得分曲线在 290k–450k 步掉到表格 Q 的水平）正好发生在估计从峰值回落的区间**：`[INFERRED, MED]` 下跌是高估被纠正的过程——网络把 ε 阶段混进 buffer 的数据学成的乐观值改回来时，贪心策略跟着变。B8 上估计单调上升到 300k 步后持平，差稳定在 +0.3，没有峰。
+5. Double DQN 的作用要等 `*_double` 批次（命令见"当前里程碑"）。M5 审查的预告（在线网络和目标网络的 argmax 只在 1–10% 的后继状态上不同，目标值相差 0.0003–0.0014）预测 γ=0.9 的 A 上是零结果；γ=0.99 和 B 上没有预测。
+
+**测试有效性**：`tests/` 的 M7 部分（6 个新文件 `test_m7_*.py` 共 165 项，加 `test_dqn.py` / `test_train_dqn.py` / `test_evaluate_batched.py` 的更新）与实现由不同 agent 按同一规格（`M7_SPEC.md`，会话临时目录）独立编写。集成时新测试 165/165 一次通过，旧文件更新后也全过（M6 时有 8 处差异；这次规格把结构、公式、RNG 协议、列名都定死了）。测试 agent 改了 3 处它自己的错误（一个手算数、一个 `len(hidden)==2` 的检查、一个像素阈值），并指出两处规格歧义：带权重时 `grad_norm` 是实际最小化的加权损失的梯度范数（实现如此）；回填脚本的线程数未定——torch 默认 8 线程时 CNN 的值与训练时（1 线程）在 1e-8 量级上不同，按它的建议让脚本应用 run 自己的 `agent.torch_threads`（已改，A 的回填按此重算）。独立写的 PER 参照循环逐位复现 `train`（模型、每局记录、每个 metrics 单元含 4 个值列）；spy 确认每次 `sample` 的 β 等于该 vec-step 的调度值、`update_priorities` 收到的是同一 batch 的 `indices` 和 `update` 返回的 `td_abs`；每个 run 的 4 个值列都能从 checkpoint 复现；`gamma=None` 的 JSON 逐字节不变；手算的 `G_t`（撞墙、吃食、饥饿截断不 bootstrap）与实现一致。全量 1652 项（M6 后 1399 项），约 100 s。
+
+## M7 实现层面的决定
+
+| 项 | 决定 | 影响 |
+|---|---|---|
+| 测量在哪里做 | 每次评估（固定的 100 个评估棋盘、贪心策略），不是训练转移上 | Part B 写 "logged throughout training"：这里是每 12.8k 步一次、在评估棋盘上；训练转移上的 max-Q 均值（`mean_q` 列，batch 上的 `Q(s,a)`）M5 起就有，但它没有对应的实际回报 |
+| 实际回报在截断处不 bootstrap | `G` 到局终为止，饥饿截断也一样 | 它是策略实际拿到的回报（van Hasselt 的做法）；γ=0.9 下 100 步后的尾巴 < 3e-5；γ=0.99 下截断局的回报会偏低，评估里饿死比例几乎为 0（M5），影响可忽略 |
+| 访问状态的平均按局长加权 | `value_summary` 的 `*_visited` = 全部访问状态的平均 | 与 van Hasselt 一致；长局权重大。首状态的一对是无权重的局平均 |
+| 旧 run 的测量 | `scripts/backfill_values.py` 从 checkpoint 补算，写 `values.csv`，不改 `metrics.csv`；脚本应用 run 的 `agent.torch_threads`（线程数影响 CPU 前向的最后几位） | 不改已有 run 的任何文件；`value_curve` 先读 `metrics.csv` 的列，没有再读 `values.csv`；`values.csv` 的 `eval_mean_score` 与 `metrics.csv` 逐行相等是脚本的自检 |
+| Dueling 的流宽 | 最后一个 `hidden` 宽度每个流各一份（Wang 的 Atari 结构：卷积共享，两个 512 的流） | B 上参数翻倍；参数量是一个混淆因素，见待拍板 |
+| PER 不用 sum tree | 向量化 `cumsum` + `searchsorted` | 100k 容量下每次采样 0.5 ms；若 M10 把 buffer 放到 1M 要重新量 |
+| PER 的 IS 权重归一化 | 按整个 buffer 的最小优先级（`(p_i/p_min)^−β`），不是按 batch 内最大 | 这是论文的 "1/max_i w_i"；按 batch 归一化会让权重尺度随 batch 抖动 |
+| β 的步进 | 按 vec-step 之前的环境步数算，一个 vec-step 的 32 次更新同一个 β，在 `total_env_steps` 处到 1 | 与 ε 同一套 `linear_schedule` |
+| `update` 的返回 | 只在给了 `weights` 时多一个 `td_abs` 数组 | 无 PER 的路径逐位不变（无 PER、无 dueling 的 run 除 4 个新列外与 M6 逐位相同） |
+| 新字段写进 4 个批次配置 | `dueling / per / per_alpha / per_beta_start / per_eps` | 配置文件"写出全部字段"的约定 |
+| 开发在 worktree | 分支 `m7` 在 `../snake-rl-m7` 开发，main 保持干净，合并时核对没有训练进程在跑 | 用户随时启动的批次不会记成 `+dirty` |
+
 ## 待拍板（默认值已按此实现或将按此实现；未收到反对即视为定案）
 
 | 项 | 默认 | 理由 |
@@ -487,6 +548,10 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | Resource-first 的适用范围（2026-10-08） | 只约束 M6 起的新代码；M0–M5 不按 resource 重写 | Part C 的数字由现有代码产生；resource 里没有向量化环境、等价门禁、观测编码这类可替换的东西。映射见 `docs/RESOURCE_BASELINE.md` |
 | （M6 之后）"无回放"的第二种定义 | 默认不加。如果报告需要把"回放的混合作用"和"更新次数"彻底分开，再加一种"同样 32 次更新/vec-step，但只对本 vec-step 的 128 条新鲜转移反复更新"的模式：去掉 `grad_steps_per_vec_step` 在 `replay: false` 下必须为 null/1 的校验，循环 G 次 `update(own)`，改一个测试 | 现有定义（1 次更新）与 M5 的 G=1 对照、本次的 `_G1` / `_t31` 对照合起来已能分离更新次数和目标网络周期两个因素；第二种定义会把"同一批数据反复过 32 遍"这种有回放时不会出现的过拟合引进来，解释更难 |
 | （M6）无回放时 `target_update_every` 的单位 | 保持按梯度步数计（与有回放时同一语义），但无回放的批次用 `target_update_every: 31`（≈ 1000/32，同样约 4k 环境步同步一次）作为主行，`1000` 的那批作为"目标网络过时"的反例保留 | 见"M6 验收"组件轴第 2 点：按梯度步数计时，无回放的 `1000` 等于 128k 环境步不同步，整个 run 只同步 3 次 |
+| （M7）过估计研究用哪个 γ | 两个都跑：γ=0.9（项目主线，A 上差 +0.25）和 γ=0.99（差 +6.1 且还在涨，Double DQN 最可能有可测作用的地方）；报告的主图用 γ=0.99 的一对，γ=0.9 的一对说明"在项目的折扣下作用多大" | γ=0.9 下 bootstrap 链只有约 10 步，argmax 偏差累积不起来，Double 的作用预期很小；只报 γ=0.9 会得到一个"Double 没用"的零结果，只报 γ=0.99 又脱离主线 |
+| （M7）Dueling 的参数量混淆 | 默认接受（B 上 334 万 → 660 万），报告里写明；若审稿需要再跑一条"共享 512、只分出两个输出层"的变体（`hidden: [512]` 改成共享的做法要加一个开关） | Wang 的结构就是两个流各自一层；等参数量的对照不是论文的做法 |
+| （M7）PER 的超参 | α=0.6、β₀=0.4（Schaul 的 Atari 值），不调 | 调了也只有一条曲线的预算；报告里写明是文献值 |
+| （M7 之后）10×10 得分曲线中段下跌的解释 | 默认按"M7 验收"第 4 点写成 `[INFERRED, MED]`：高估回落期；要坐实需要 ±replay 的 10×10 批次（M6 队列里的 `dqn_B8_W10_noreplay_t31` 等）和一次按状态类别拆的高估分析 | 现有证据只是时间上重合 |
 
 ## 偏离 Part B 的记录
 
@@ -530,3 +595,4 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 - 2026-10-20：M6 代码完成（commit `d81a7f3`，全量 1399 项测试通过；M5 后是 1293 项）。做法同前：写规格（`M6_SPEC.md`，会话临时目录）→ 一个 agent 按规格独立写测试，我同时写实现 → 集成（8 项不过，全是实现与规格的差异，见"M6 验收"的测试有效性段）。新增 `networks.CNN`、`DQNConfig.replay / conv_channels`、`train` 的无回放分支与 `aborted.json`、`aggregate` 的中止 run 处理、`scripts/bench_update.py`、`configs/{smoke_B_8x8,dqn_B_8x8,dqn_B_10x10}.yaml`、`tests/test_bench_update.py`；A 配置写出 `replay: true`；README / PLAN §2 / `RESOURCE_BASELINE.md` 同步。设备基准（GPU 空闲）与 128k 步的学习探针之后，先跑了 A 上的两个无回放批次（CPU，各 5 种子，共约 1 分钟）和 B8 的 8×8 主批次（GPU），这 15 个 run 记成 `d81a7f3+dirty`（原因见"M6 验收"）；其余 8×8 的 B 批次排成一条后台队列。用户不在线，批次是我在后台跑的（M5 先例），超过 `CLAUDE.md` 的 10 分钟线。无头 GUI 用 B 观测的 checkpoint 跑过一次（侧栏显示 "Observation B: 8 planes"，动作值正常）。
 - 2026-10-20（续）：8×8 的全部批次跑完（主结果、观测轴 B7 / B3、组件轴 ±replay ±target、无回放对照 `_t31` / `_G1` / `_G1_t31`，共 13 个实验 × 5 种子），表在 `runs/tables/m6_W8_*.md`，图在 `runs/figures/m6_W8_*_curve.png`。一个独立 agent 做了对抗式审查（`runs/review/m6/`）：所有数字复算一致，改掉了五处解读（见"M6 验收"的审查段）。10×10 队列（9 个批次）在主批次 84% 处被 Claude Code 因系统内存不足停止，中断的目录移到 `runs/_interrupted/`，续跑命令写在"当前里程碑"，由用户在独立终端跑。教训记在"M6 验收"的并行段：一次只跑一个 5 进程的 GPU 批次。文档提交：`b6c096d`、`1d12f6b`、`75588b3`、`368bfb2`、`2793f4d`、`88e2fbd` 及本次。
 - 2026-10-12：先提交了 2026-10-08 的文档改动（`7997035`）。核验进度后确认 Part D 模板要求实际 GUI 截图而 `gui/app.py` 仍是桩，于是把 M9 提前到 M6 之前做。做法：写规格（`M9_SPEC.md`，会话临时目录）→ 一个 agent 按规格独立写 `tests/test_gui.py`（56 项），我同时写 `app.py` → 集成：56 项里 1 项不过（规格里"人玩首个方向键是否取消暂停"两句互相矛盾），按测试的读法改实现 → 全量 1293 过。真实窗口冒烟一次（弹窗约 2 s，`--steps 40` 自动退出）。再写 `scripts/gui_screenshots.py` 出四张图，写 `docs/PartD-environment-gui.md`，按 Part C 的脚本改出 `runs/review/partd/build_partd.py`，模板排版 → 校验通过 → LibreOffice 渲染 4 页逐页看过（第一版"Screen shot(s)"标签孤立在页底，给它加了 keepNext）。`gh repo view`：仓库仍 PRIVATE。 之后按用户指示删除文档里的偏离说明段，重排后仍 4 页、校验通过，成品已覆盖。
+- 2026-10-20（M7）：用户回复"继续"后，我试图在后台重启 10×10 队列，被权限分类器拒绝（"Interfere With Workloads"），所以 10×10 仍等用户启动。转做 M7：在 worktree `../snake-rl-m7`（分支 `m7`）开发，main 保持干净。做法同前：写规格（`M7_SPEC.md`，会话临时目录）→ 一个 agent 按规格独立写测试，我同时写实现。代码：`evaluate(..., gamma)` 的过估计测量、`train.py` 的 4 个值列、`scripts/backfill_values.py`、`aggregate.value_curve`、`plots --values`、`networks.DuelingMLP`、`replay.PrioritizedReplayBuffer`、`agent.update(batch, weights)`、配置与校验、4 个批次配置的新字段。对 M7 之前的 6 个实验（`dqn_A_W8`、`dqn_A_W8_notarget`、`dqn_A_W8_gamma099`、`dqn_B8_W8`、`dqn_B8_W8_notarget`、`dqn_A_W10`）回填了测量（`values.csv`，checkpoint 与评估行全部相等），图在 `runs/figures/m7_W8_values_*.png`、`m7_W10_values_dqn.png`，数字和解读在"M7 验收"。M7 的批次命令写在"当前里程碑"，与 M6 的 10×10 一起等用户。

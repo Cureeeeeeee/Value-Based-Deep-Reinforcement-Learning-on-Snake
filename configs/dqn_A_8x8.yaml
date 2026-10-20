@@ -22,6 +22,13 @@
 # name is one configuration, and a run directory is never overwritten:
 #   python -m snake_rl.train --config configs/dqn_A_8x8.yaml --seed 0 --exp dqn_A_W8_g099 --set agent.gamma=0.99
 # (with scripts/run_matrix.py: --set ... --exp-prefix dqn_A_W8_g099)
+# The M7 refinements are this file with --set (--set needs a new --exp; combine the flags for a
+# combined row):
+#   Double DQN target:        --exp dqn_A_W8_double --set agent.double=true
+#   Dueling head:             --exp dqn_A_W8_dueling --set agent.dueling=true
+#   prioritised replay:       --exp dqn_A_W8_per --set agent.per=true
+# Every DQN run also logs the value estimate against the realised return (eval_value_* /
+# eval_return_* columns), the overestimation measurement of the Double DQN study.
 exp: dqn_A_W8
 env:
   W: 8
@@ -44,7 +51,12 @@ agent:
   eps_end: 0.05
   eps_decay_fraction: 0.2        # epsilon reaches eps_end after 20 % of total_env_steps
   hidden: [256, 256]
-  double: false                  # Double DQN is studied in M7
+  double: false                  # Double DQN target (M7: the overestimation study)
+  dueling: false                 # Dueling head V + A - mean(A) (M7)
+  per: false                     # prioritised replay (M7); needs replay: true
+  per_alpha: 0.6                 # priority exponent
+  per_beta_start: 0.4            # importance-sampling exponent at step 0, annealed to 1.0 at total_env_steps
+  per_eps: 1.0e-6                # added to |td| before the exponent
   keep_checkpoints: true         # weights-only checkpoint at every evaluation
   device: cpu                    # faster than cuda for this small MLP; repeatable bit for bit on one machine
   torch_threads: 2               # five seeds in parallel use 10 of the 16 logical cores
