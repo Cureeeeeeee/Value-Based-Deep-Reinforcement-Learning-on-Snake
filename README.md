@@ -77,7 +77,9 @@ scripts/         check_env.py, bench_vec_env.py (env throughput), bench_update.p
                  cpu vs cuda), run_matrix.py (seeds x grid batch runner), backfill_values.py (the
                  overestimation measurement for runs trained before M7, from their checkpoints),
                  gui_screenshots.py (the Part D figures, rendered by the GUI without a window),
-                 export_logs.py (the logs of runs/ without weights, one zip for the notebook)
+                 export_logs.py (the logs of runs/ without weights, one zip for the notebook),
+                 report_extra_figures.py (the composite behaviour figures of the final report: heat-maps
+                 of several players on one colour scale, a three-panel death-cause figure)
 notebooks/       results.ipynb: Colab notebook regenerating every table and figure from the
                  exported logs (and a behaviour analysis when weights are present)
 runs/            training outputs (not in git)

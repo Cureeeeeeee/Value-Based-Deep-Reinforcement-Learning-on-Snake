@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-**M10 完成（代码与 5 条补齐批次都在 2026-10-22，"M10 验收"）：矩阵 64 个配置 × 5 种子全部跑完（`python -m snake_rl.analysis.matrix --status` 全 ok），`runs/report/`（23 张表、31 张图、`index.md`、`manifest.json`）由 `python -m snake_rl.analysis.report` 生成，日志包 `runs/export/runs_logs.zip`（4.2 MB）供 notebook；探针与 10×10 的 13 条行为分析（`m10_behaviour.sh`，会话临时目录）由用户从 bypass 窗口启动、18:29–18:53 跑完并已填入 → 下一步：Part E 报告写作，表和图全部取自 `runs/report/index.md`**。M8 完成（代码 2026-10-21，批次与结果 2026-10-22，"M8 验收"）。M7 完成（代码 2026-10-20，批次与结果 2026-10-21 凌晨，"M7 验收"）。M8 的 16 条奖励轴批次（8×8，5 种子一条）已由队列脚本 `m8_queue.sh`（会话临时目录；与 `batch_queue.sh` 同机制：串行、一次一个 5 进程批次、开跑前等空闲内存 ≥ 7 GB；日志 `queue_logs/m8_queue.log`）从用户的 bypass 窗口脱离会话跑完：2026-10-22 00:01–02:57，80 个 run 退出码全 0，git `af580ff`（代码与 `f07c30c` 相同）；A 的 8 条各 4–5 分钟（CPU），B8 的 8 条各 17–19 分钟（GPU）。命令记录如下：
+**M10 完成（代码与 5 条补齐批次都在 2026-10-22，"M10 验收"）：矩阵 64 个配置 × 5 种子全部跑完（`python -m snake_rl.analysis.matrix --status` 全 ok），`runs/report/`（23 张表、31 张图、`index.md`、`manifest.json`）由 `python -m snake_rl.analysis.report` 生成，日志包 `runs/export/runs_logs.zip`（4.2 MB）供 notebook；探针与 10×10 的 13 条行为分析（`m10_behaviour.sh`，会话临时目录）由用户从 bypass 窗口启动、18:29–18:53 跑完并已填入 → **Part E 报告初稿已完成（2026-10-22，成品 `..\43008-Project-Part-E-TheDeadlyTriad.docx`，见下方"Part E"一节）；待用户：贡献表两行、notebook 在 Colab 实跑一次、篇幅拍板（26 页）、Canvas 若有 Part E 模板则重排、push**。M8 完成（代码 2026-10-21，批次与结果 2026-10-22，"M8 验收"）。M7 完成（代码 2026-10-20，批次与结果 2026-10-21 凌晨，"M7 验收"）。M8 的 16 条奖励轴批次（8×8，5 种子一条）已由队列脚本 `m8_queue.sh`（会话临时目录；与 `batch_queue.sh` 同机制：串行、一次一个 5 进程批次、开跑前等空闲内存 ≥ 7 GB；日志 `queue_logs/m8_queue.log`）从用户的 bypass 窗口脱离会话跑完：2026-10-22 00:01–02:57，80 个 run 退出码全 0，git `af580ff`（代码与 `f07c30c` 相同）；A 的 8 条各 4–5 分钟（CPU），B8 的 8 条各 17–19 分钟（GPU）。命令记录如下：
 
 ```powershell
 .venv\Scripts\activate
@@ -349,6 +349,14 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 ## Part D（环境 / GUI 设计）
 
 成品 `..\43008-Project-Part-D-TheDeadlyTriad.docx`（4 页，套用 `Project-Part-D.docx` 模板；同目录有 LibreOffice 渲染的 PDF），正文源 `docs/PartD-environment-gui.md`，排版脚本 `runs/review/partd/build_partd.py` + `render.py`（不进 git；按 Part C 的脚本改）。内容：环境说明（棋盘与动力学、动作、终止与截断、观测 A / B、奖励 R0–R3、标量与向量化两套实现及等价门禁、自带玩家与 Part C 分数）；GUI 类型（自建环境 + 自写 pygame 界面）+ 实现与测试；四张截图及说明（人玩 + 表格 Q 顾问、agent 玩、局终死因与统计、回放）。截图由应用自身在 dummy 驱动下渲染，`python scripts/gui_screenshots.py` 重生成得到逐字节相同的帧（种子固定；图注里引用的分数与 Q 值均读自这些帧）。docx 结构校验通过（docx skill 的 `validate.py`）。 2026-10-12 按用户指示删除了文档里的"Differences from the Part B plan"一段；偏离只记在本文件的"偏离 Part B 的记录"。
+
+## Part E（最终报告）
+
+- **成品**：`..\43008-Project-Part-E-TheDeadlyTriad.docx`（26 页，A4，无课程模板——Canvas 的 Part E 提交页若提供模板，需用户下载后重排；同目录 PDF 由 LibreOffice 渲染）。正文源 `docs/PartE-final-report.md`（英文：摘要、8 章、贡献表、13 篇参考文献、附录 A 复现 / B 全量表 / C 表格 Q 扫描）。排版与核对脚本在 `runs/review/parte/`（不进 git）：`build_parte.js`（docx-js 从源文件的小方言生成整份 docx；`npm install docx@9.5.1` 装在该目录）、`render.py`（`py -3.11`：构建 → OOXML 校验 → LibreOffice 转 PDF → 逐页 PNG）、`verify_parte.py`（Table 3 从 `runs/` 与 `runs/baselines/` 重算、Table C1 对 `runs/tables/sweep_tabular_W8_alpha_gamma.md`、`@figure` 文件存在、docx 文字与源文件逐段一致；结果 PASS）、`paired_bfs.py`（对 BFS 逐局配对与每 100 步食物率）。
+- **内容**：9 张表（T1 设置；T2 问题→答案总表；T3 两板头条含对 BFS 逐局配对；T4 表示轴；T5 γ 轴；T6 组件轴含 `t31` / `G1` / `G1_t31` 短名；T7 改进族含高估差；T8 奖励轴；T9 10×10 行为）+ 附录 B1 / B2 全量、C1 扫描；13 张图（GUI；得分分布箱线图；obs_W10；γ 轴两板；组件两板；预算 + 值估计；Double 值估计；奖励两板；三面板死因；探针；两板热力图拼图；临死局面）。数字全部取自 `runs/report/`、本文件已审查的配对差和 `runs/behaviour/`。新增 `scripts/report_extra_figures.py`（热力图拼图、三面板死因图、箱线图，都从分析输出 / run 目录生成；`tests/test_report_extra_figures.py` 6 项），README 已记。
+- **审查（两个独立 agent，2026-10-22）**：数字核对（`runs/review/parte/factcheck/`：从 `runs/` 重算 2,337 个数，2,299 一致，38 处标记，表格全部正确）与批改人视角通读（`runs/review/parte/read/report.md`）。按审查改正的实质性问题：DQN−表格的区间是两样本 t 区间而非配对（标签改正）；"10×10 学习策略最高分 42"→ 46（A 无目标网络）；高估"24–30 %"是绝对差（比例 25–26 %）；A 的死因演变回到了 M8 审查前的错误措辞（改正为 12.8k 步 饿死 35 / 撞己 56 / 撞墙 9 %，25.6k 起撞己 97 %）；循环比例被写成饿死比例；"唯一有饿死的配置"不成立；R1 在 10×10 上 −0.95 不是"无作用"；"任何幅度都不会 hacking"超出证据（改为只对 0.01 / 0.1 两档成立，年金机制未跑）；Double"去掉三分之一"只对 B8 γ0.99；"与 BFS 持平"→"分不开"；B8 10×10 γ0.9"接近平台"统一为推断措辞；Table 1 CNN 墙钟 17–37 / 37–53 min；更新占墙钟 94–99 %；梯度范数上限 1.5；Figure 2 / 6 / 10 图注按图改；Fedus et al. 2020 并入正文；补了 Part C 遗留的 10×10 中段下跌结论、Part B 承诺的箱线图与临死轨迹图、问题→答案总表、附录 C、棋盘抽样不确定性。**事实更正（Part D 已提交文档，不动）**：Part D 图 2 的图注把食物方向读错——截图里 food-U 亮、heading-R 亮，食物在头上方三格、身体后面，不是"正前方"；Part E 图 1 已按截图改正并注明。
+- **未做 / 用户要做**：(1) 贡献表两行 "[to be agreed]"——分数按它分配，团队定下后填入；(2) notebook 未在 Colab 实跑，报告如实写"validated structurally but not executed on Colab"——跑一次并托管 `runs/export/runs_logs.zip`（1,321 文件，4.2 MB）后改 §5.3 / 7.3 / 附录 A 三处措辞；(3) 仓库仍 PRIVATE；(4) 篇幅 26 页（正文约 13k 词 + 表），批改人视角审查建议压到 9–10k 词；我两轮压缩只去掉约 400 词，再压要删结果——最省事的砍法是 §6.8 + Table 9 和附录 B 移到仓库、去掉图 8 与图 12（约 −5 页），没有页数限制的证据，留用户拍板；(5) 观测 A 的策略搜索仍是"初步、未入 run 目录"，报告里如此标注（待拍板表"观测 A 的表示上界"一行）。
+- **测试**：全量 1886 项通过（新增 6 项）。
 
 ## M6 验收（2026-10-20 起；B 上的批次结果跑完即填）
 
@@ -818,6 +826,8 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | 2026-10-12 | GUI 的 checkpoint / 观测模式在命令行选择，不是侧栏单选钮；访问热力图叠加未实现；观测 A 特征条与人玩顾问是 mock-up 没有的新增 | 侧栏控件成本高、答辩价值低；热力图的数据来自 M8 的行为分析，届时一并做。三条只记在此（文档的偏离说明段按用户指示删除） |
 | 2026-10-20 | DQN-B（CNN）的 γ 也用 0.9（Part B 的初始值 0.99） | 与 DQN-A、表格 Q 在同一折扣下比较，A 对 B 的差别才只剩观测与网络。M5 在 A 上验证过 γ=0.99 不改变结果；B 上没有验证。M8 的奖励轴按待拍板在 γ=0.99 下做，届时 B8 要在 0.99 下补一条主线 |
 | 2026-10-20 | Part B 的 "−replay" 没有定义；实现为"每个 vec-step 对自己的 128 条转移做 1 次梯度更新"，每条转移的梯度步数从 64 变成 1 | 这是唯一不改变其他超参又没有回放语义的做法（待拍板表的（M6）行）。后果：这个消融同时改变了 batch 的时间混合与每条转移的更新次数两件事，报告里不能把差别全归给"相关样本" |
+| 2026-10-22 | **事实更正**：Part D 文档图 2 的图注写"straight is preferred because the food is straight ahead" | 截图里 food-U 与 heading-R 亮：食物在头上方三格、身体后面，两个安全动作都不靠近它；Part E 图 1 按截图改正并注明，Part D 已提交不动 |
+| 2026-10-22 | Part B 承诺的箱线图与临死轨迹回放在 Part E 交付（图 2、图 13）；Colab notebook 未实跑；hosted CI 未做 | 见"Part E"一节 |
 
 ## 会话日志
 
@@ -850,3 +860,4 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 - 2026-10-22（M10 批次与结果）：5 条补齐批次由用户的 bypass 窗口用 `m10_queue.sh` 跑完（14:29–17:59，25 个 run 全 rc=0，git `bdea984`）；中途我在训练旁边起的探针行为分析被低内存看护杀掉（训练无恙；后三批变慢另有原因，见"M10 验收"），改为队列结束后由用户启动 `m10_behaviour.sh`（自等队列结束与内存）。队列结束后把 `m10` 合并进 main（`f0c6f3c`，fast-forward，worktree 已删），`matrix --status` 64 行全 ok，`report` 生成 `runs/report/`（23 表 31 图），`export_logs` 打包 `runs/export/runs_logs.zip`。结果写进"M10 验收"：10×10 上 γ 轴 +5.03（分解与 8×8 一样：局长 +78%、觅食率 −30%），奖励轴 R1 / R2 / R3 都 ≤ 1 分，探针 closer=0.1 不 hacking、是唯一对 BFS 配对区间不含零的配置（+1.37，5/5，留一不稳健）。待拍板两行定案。下一步 Part E 报告。
 - 2026-10-22（M10 审查）：M10 结果段经独立审查（`runs/review/m10/review.md`）：表格、配对区间、斜率、值估计全部重算一致，四张报告表逐字节相同；推翻 / 改正四处推理——批次变慢的归因（变慢在我起分析之前就开始、各批开跑内存 10–13 GB，改为"来源未明的 CPU 侧负载"`[INFERRED, LOW]`）、"估计直线上升"（实为减速，M7 审查纠正过同样措辞）、探针"稳健高于 BFS / 全矩阵最高分"（留一 2/5 跨零；只是 8×8 最高）、循环价值的比较对象（应比 visited 态的继续觅食价值 9.9 而不是起始态 18.5；"再大一个量级就 hacking"不成立）；改了 8 处小数字 / 措辞，补了胜率、最高分、γ0.99 在 10×10 上的 3% 饿死、B7 / G1_t31 的限定。
 - 2026-10-22（M10 行为分析）：13 条行为分析由用户从 bypass 窗口启动 `m10_behaviour.sh`（自等队列结束与内存）跑完（18:29–18:53，全 rc=0），结果填进"M10 验收"的行为分析段：探针 final 0 局循环、early 54% 的圈是陷阱（Q 2.3 对循环价值 5）、靠近步占 77.7%（把第 3 点的假设坐实）；10×10 穿中不贴边（0.22–0.27 对均匀 0.36），γ0.99 的 3% 饿死有一小半是从开局就绕圈的陷阱局（Q 11–12 高于不循环局），三种奖励一致。M10 关闭。
+- 2026-10-22（Part E）：报告初稿写成（`docs/PartE-final-report.md`）→ docx-js 排版流水线（`runs/review/parte/`）→ 两个独立 agent 审查（数字核对 2,337 个数；批改人视角通读）→ 按审查改稿两轮（实质性改正见"Part E"一节）→ `verify_parte.py` PASS、全量 1886 项测试通过 → 成品复制到 `..\43008-Project-Part-E-TheDeadlyTriad.docx` / `.pdf`。新增 `scripts/report_extra_figures.py` + 6 项测试、README 一行。待用户：贡献表、Colab 实跑、篇幅与模板、push。
