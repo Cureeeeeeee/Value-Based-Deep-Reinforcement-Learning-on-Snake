@@ -30,7 +30,8 @@
 | M8 奖励轴 R0–R3 | 无（奖励变体是 M1 的环境代码，训练用 `--set env.reward.variant=...`） | — | 不写新训练代码；批次命令见 `docs/PROGRESS.md` |
 | M8 行为分析 | 无（resource 里没有热力图 / 轨迹 / 死因演变的代码） | L3 | **已做（2026-10-21）**：`snake_rl/analysis/behaviour.py`（标量环境上的 rollout、访问热力图、循环 / hacking 统计、临死轨迹图、GUI 兼容的录像导出、CLI），`aggregate.death_cause_curve`，`plots --causes` |
 | M9 GUI | W8 Part C / W9 Part B 的 `run_game`（人类输入 → `env.step` → `render` 的回合循环，人机对战） | 模式参照 | "人玩"和"agent 玩"两种模式的主循环照 `run_game` 的结构组织；pygame 渲染与 Q 值侧栏是 L3 |
-| M10 Colab notebook | 各 resource notebook 的安装格；W9 Part C 的 `plot_results` | L1 / 参照 | 安装格照 resource 写法（`!pip install ...`）；主图仍由 `snake_rl/analysis/` 生成（M5 已冻结的 CI 带画法不改） |
+| M10 Colab notebook | 各 resource notebook 的安装格；W9 Part C 的 `plot_results` | L1 / 参照 | **已做（2026-10-22，`notebooks/results.ipynb`）**：安装格照 resource 写法（clone + `%pip install -e .`）；主图不在 notebook 里画，全部由 `snake_rl/analysis/report.py` 生成（M5 已冻结的 CI 带画法不改），notebook 只展示 `runs/report/manifest.json` 列出的文件 |
+| M10 矩阵与报告（`analysis/matrix.py`、`analysis/report.py`、`scripts/export_logs.py`） | 无 | L3 | **已做（2026-10-22）**：实验矩阵写成数据（64 个命名配置 + 6 个基线），`--status` 对照 `runs/` 核对每个 run 的 `config.yaml`，`--commands` 生成缺失行的 `run_matrix.py` 命令；`report` 从 run 目录一次生成全部表和图 |
 | CUDA 检查 | W8/W9 `check_cuda()` | — | M0 已有 `scripts/check_env.py`，不替换 |
 
 ## 3. 与本仓库既有规则的关系

@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-**M8 完成（代码 2026-10-21，批次与结果 2026-10-22，"M8 验收"）→ 下一步 M10（全矩阵 + `notebooks/results.ipynb` + 行为分析图）；开工前先读 `docs/RESOURCE_BASELINE.md`、"待拍板"里标（M10）的各行和"M8 验收"第 3 点末尾的探针建议**。M7 完成（代码 2026-10-20，批次与结果 2026-10-21 凌晨，"M7 验收"）。M8 的 16 条奖励轴批次（8×8，5 种子一条）已由队列脚本 `m8_queue.sh`（会话临时目录；与 `batch_queue.sh` 同机制：串行、一次一个 5 进程批次、开跑前等空闲内存 ≥ 7 GB；日志 `queue_logs/m8_queue.log`）从用户的 bypass 窗口脱离会话跑完：2026-10-22 00:01–02:57，80 个 run 退出码全 0，git `af580ff`（代码与 `f07c30c` 相同）；A 的 8 条各 4–5 分钟（CPU），B8 的 8 条各 17–19 分钟（GPU）。命令记录如下：
+**M10 进行中（代码 2026-10-22，worktree `../snake-rl-m10` 分支 `m10`，见"M10 验收"；补齐矩阵的 5 条批次由用户的 bypass 窗口用 `m10_queue.sh` 从 2026-10-22 14:29 起跑：10×10 B8 γ0.99 的 R0 → 8×8 的 hacking 探针 `closer=0.1` → 10×10 B8 γ0.99 的 R1 / R2 / R3，每批约 40 / 18 / 40 分钟；跑完即填结果）**。M8 完成（代码 2026-10-21，批次与结果 2026-10-22，"M8 验收"）。M7 完成（代码 2026-10-20，批次与结果 2026-10-21 凌晨，"M7 验收"）。M8 的 16 条奖励轴批次（8×8，5 种子一条）已由队列脚本 `m8_queue.sh`（会话临时目录；与 `batch_queue.sh` 同机制：串行、一次一个 5 进程批次、开跑前等空闲内存 ≥ 7 GB；日志 `queue_logs/m8_queue.log`）从用户的 bypass 窗口脱离会话跑完：2026-10-22 00:01–02:57，80 个 run 退出码全 0，git `af580ff`（代码与 `f07c30c` 相同）；A 的 8 条各 4–5 分钟（CPU），B8 的 8 条各 17–19 分钟（GPU）。命令记录如下：
 
 ```powershell
 .venv\Scripts\activate
@@ -46,7 +46,7 @@ M7 的 9 条 8×8 批次也已由同一队列跑完（2026-10-20 23:42 – 2026-
 | M7 | Double DQN + 过估计测量；Dueling；PER | ✅ 2026-10-21（代码 `37a9dfd` 2026-10-20；9 个批次与结果 2026-10-21 凌晨） | 代码：过估计测量（`evaluate(..., gamma)`，每次评估 4 列 `eval_value_* / eval_return_*`，`scripts/backfill_values.py` 给旧 run 补算，`aggregate.value_curve`，`plots --values`）、`networks.DuelingMLP`、`replay.PrioritizedReplayBuffer`、`agent.update(batch, weights)`；配置开关 `agent.dueling / per`。验收"过估计曲线出图"已用回填的 6 个实验完成：`runs/figures/m7_W8_values_*.png`、`m7_W10_values_dqn.png`——DQN 沿访问状态高估 0.25（A）/ 0.30（B8），γ=0.99 下 +6.1（2.1 倍）且到 512k 步仍在涨；首状态反而低估（A）。批次结果（8×8，5 种子，配对）：Double DQN 对高估的作用只在 γ=0.99 的 CNN 上明确（访问状态 +2.53 → +1.66，首状态到无偏），γ=0.9 下 ≤ 0.03；对得分没有一致方向（A γ=0.9 +0.7–1.1、A γ=0.99 +0.5（最后 10 / 20 次口径）、B8 γ=0.9 零、B8 γ=0.99 最后 20 次 −0.9 且在缩小）。Dueling：得分不变，B8 高估 −0.08（5/5）。PER：得分不变或略低，IS 权重按 buffer 最小优先级归一化把加权损失压掉三个数量级（Adam 下实际步长只小 1.4–1.5 倍）。**意外的主结果：CNN on B8 在 γ=0.99 下 22.72 ± 1.04，比 γ=0.9 高 +4.91 [+3.48, +6.34]，与 BFS 分不开（逐局配对 −0.35 [−1.39, +0.70]），全是存活时间的作用（每 100 步吃的食物少 24%，局长 +68%）；A 上同样的改动 −0.2**。详见"M7 验收" |
 | M8 | 奖励轴 R0–R3 + 行为分析 | ✅ 2026-10-22（代码 2026-10-21，批次与结果 2026-10-22） | 代码：`analysis/behaviour.py`（标量环境 rollout 记录每步的头 / 朝向 / 食物 / 动作 / 奖励 / Q 值；访问热力图与贴边比例；尾段循环统计（周期、周期后缀长度、塑形奖励）与 hacking 候选；临死轨迹图；checkpoint 别名 early / mid / late / final；GUI 兼容的录像导出；CLI 单 run 与整实验两种模式）、`aggregate.death_cause_curve`、`plots --causes`（死因随训练演变）。64 项 M8 测试由独立 agent 按 `M8_SPEC.md` 编写，全量 1716 项通过。奖励轴批次（R1 / R2 / R3 / 对称 R3 / R3+H=1000 的 hacking 探针，A 与 B8，γ=0.9 与 0.99；16 条 80 个 run）跑完，结果见"M8 验收"：奖励设计对得分的作用都在 ±1.4 分内；R2 势函数塑形开局最快但在 B8 上最终最差（−1.1），非对称 R3 在 B8 上末段略好（+0.5，不稳健；γ=0.99 下 23.5 分、点估计首次高于 BFS）；**没有 reward hacking**（循环比例与 R0 同量级，循环中的 Q 估计 11.3 对循环真实价值 0.5——是陷阱不是利用）；H=1000 对训练是空操作（ε-greedy 从不走满饥饿上限）；R1 无自杀。结果经独立审查改正 |
 | M9 | pygame GUI 三模式 | ✅ 2026-10-12 | `pytest`：1293 passed（+56，`tests/test_gui.py`，无头 SDL dummy 驱动，4 s）。验收达成：人玩（方向键 / WASD；默认逐步、Space 实时；可挂"顾问"agent 显示其 Q 值）+ agent 玩（基线 / Q 表 / 任意 DQN checkpoint；实时三动作 Q 值条形图与所选动作、观测 A 的 11 位、分数 / 饥饿计数 / 回报 / 本会话死因统计）+ 回放（JSON 录像 = 环境配置 + 种子 + 动作序列 + 每步 Q 值，重新模拟）。真实窗口冒烟通过。截图：`python scripts/gui_screenshots.py` → `runs/figures/partD_gui_*.png`。→ Part D 已交付。详见下方"M9 实现层面的决定" |
-| M10 | 矩阵批量（5 种子）、`analysis/` 全部图表、Colab notebook | ☐ | → Part E |
+| M10 | 矩阵批量（5 种子）、`analysis/` 全部图表、Colab notebook | 🔄 代码 2026-10-22；批次跑完即填 | → Part E |
 
 ## M1 实现层面的决定（PLAN §3 之外，代码即文档）
 
@@ -232,7 +232,7 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 已知限制（不在 Part C 前修）：
 
 - `run_matrix` 在输出被重定向、且 `--runs-dir` / `--config` 路径含控制台代码页以外的字符时，会以 `UnicodeEncodeError` 中止并杀掉正在跑的 run。路径保持 ASCII，或设 `PYTHONIOENCODING=utf-8`。
-- `aggregate` 的命令行不展开通配符（PowerShell 下 `--exp runs\sweep\*` 会报错，要逐个列目录；bash 没问题），也不检查各行的棋盘大小 / 评估种子 / 局数是否一致。M10 出总表前要补：`glob` 展开、重复标签报错、行间环境不一致时告警。
+- `aggregate` 的命令行不展开通配符（PowerShell 下 `--exp runs\sweep\*` 会报错，要逐个列目录；bash 没问题），也不检查各行的棋盘大小 / 评估种子 / 局数是否一致。M10 出总表前要补：`glob` 展开、重复标签报错、行间环境不一致时告警。**M10 已补（2026-10-22，"M10 验收"）。**
 - `run_matrix` 不能在一次调用里扫 R2 下的 γ（网格各轴独立，而 R2 要求 `env.reward.gamma == agent.gamma`）。每个 γ 值单独调用一次：`--set env.reward.variant=R2 env.reward.gamma=G agent.gamma=G --exp-prefix <name>_gG`。
 
 ## M5 验收
@@ -675,6 +675,26 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | R2 的 `env.reward.gamma` | 维持"必须显式等于 agent 的 γ"，命令里写明，不引入 `null` 跟随语义 | 改语义要先改 PLAN §3.5；显式写不会错 |
 | `final_cells` 的顺序 | 头在前（`reversed(env.snake_cells())`） | `snake_cells()` 返回尾→头（`cells_from_body_age` 的顺序），规格按"头在前"写、测试也按它断言；临死轨迹图把第 0 个格画成头 |
 
+## M10 验收（代码 2026-10-22；批次与结果跑完即填）
+
+**代码（worktree `../snake-rl-m10`，分支 `m10`；规格 `M10_SPEC.md` 在会话临时目录；做法同前：写规格 → 一个 agent 按规格独立写测试、我同时写实现）**：
+
+| 项 | 做了什么 | 验收 |
+|---|---|---|
+| `aggregate --last-steps S` | 按环境步数取尾部（`env_steps >= last − S`，含端点；DQN 的 S=51200 正好是最后 5 次评估），API `summarise_experiment(last_steps=)`；last-k 与 last-steps 二选一，表的列名 `last-<S> steps mean +- 95% CI` | `dqn_A_W8`：last-5 与 last-51200 都是 16.07 ± 0.64 `[COMPUTED]`；表格 Q（每 25k 评估一次）的 51200 步只含 3 次评估，所以两种口径在报告里要注明 |
+| 尾部校验（待拍板"M10 之前"行） | last-k 和 last-steps 都要求各种子的尾部落在相同的 `env_steps`，否则报错并点名两个 run | 旧测试 `test_last_k_names_the_run_that_is_too_short` 里"参差的两个种子各取自己最后两行"的断言与此矛盾，改为预期报错（M10 前那是未定义行为，没有任何已报的数字依赖它） |
+| `aggregate` 命令行（M4 实现层面的决定里留的三个坑） | `--exp` / `--baseline` 支持通配（`"runs/dqn_A_W8_R[123]"`，无匹配报错）；同表标签重复报错；每行记录 `evaluation`（W、评估种子、局数），`results_table` 在各行不一致时发一次 `AggregateWarning`（8×8 行与 10×10 行同表、基线 100 局对实验的局数不等都会报） | — |
+| `agent.keep_checkpoints` 不算配置差异 | `aggregate.IGNORED_SETTINGS`，`_require_one_configuration`、`run_matrix.existing_status`、`matrix.status` 同用：矩阵补跑可以关 checkpoint 而不与已有种子冲突 | — |
+| `analysis/matrix.py` | 实验矩阵写成数据：64 个命名配置（8×8 48 个、10×10 16 个；`G1_t31` 是 `budget` 组的命名配置）+ 6 个基线，每行 = 配置文件 + `--set` 项 + 组 + 标签；`--status` 对照 `runs/` 核对每个 run 的 `config.yaml`（去掉 `exp`、`run`、`keep_checkpoints` 后逐键比），`--commands` 生成缺失行的 `run_matrix.py` 命令（DQN 行默认加 `agent.keep_checkpoints=false`） | 对现有 `runs/`：64 行配置全部 `ok`，缺的正是本次队列的 5 条 `[COMPUTED]` |
+| `analysis/report.py` | 25 个报告项（Part C 两板、表示轴两板、γ 轴两板含值估计图、组件消融 4 组、更新预算两板、容量、M7 变体两组、Double 的值估计图两张、奖励轴 5 组含死因图、探针、两板总表）→ `runs/report/{tables,figures}` + `index.md` + `manifest.json`（每项用了哪些实验、几个种子、各 run 的 git hash）；缺 run 的实验从项里剔除并告警，整项缺则跳过 | 对现有 runs 冒烟：22 张表、29 张图，`budget_W8` 曲线人工核对无误 |
+| `scripts/export_logs.py` | 打包 `runs/` 的日志（`config.yaml` / `metrics.csv` / `final_eval.json` / `values.csv` / `aborted.json`、`runs/baselines/*.json`，可选行为分析），不含权重，zip 内路径以 `runs/` 开头，解压到仓库根即可分析 | 现有 runs：1256 个文件、约 12 MB |
+| `notebooks/results.ipynb` | Colab：clone + `%pip install -e .` → 取日志（上传 zip / `LOGS_URL` / 本地已有 `runs/`）→ `matrix --status` → `report` → 按 `manifest.json` 展示全部表和图 → 有权重时跑一条行为分析 | 本地只验证了 JSON 结构（nbformat 4）和引用的模块名；**未在 Colab 实跑** |
+| `scripts/run_matrix.py` | 开头把仓库根加进 `sys.path`：脚本用本检出的包，不受 editable 安装指向哪个检出影响（在 worktree 里旧测试 `..._from_any_directory` 才能过） | — |
+
+**测试有效性**：`tests/test_m10_*.py` 164 项（last-steps 45、CLI 与可比性 26、run_matrix 8、matrix 39、report 24、export_logs 16、notebook 6）由独立 agent 按规格写，规格里的数字（64 / 48 / 16 行、worked example 的 2.7411 等）由测试逐项核对；首轮 155 过 9 败，9 败同一原因（`export_logs` 把 `runs/baselines/` 子目录里的 JSON 也收了，实现改为只收直接在该目录下的）。全量 1880 项通过。
+
+**批次与结果**：跑完即填。
+
 ## 待拍板（默认值已按此实现或将按此实现；未收到反对即视为定案）
 
 | 项 | 默认 | 理由 |
@@ -705,8 +725,8 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | （M6）“发散”怎么判定 | **`aborted.json` 已实现（2026-10-20）**，`aggregate` 把中止的种子分开警告并在表的 seeds 列标出；指标判定仍在 `metrics.csv` 上做：`mean_q` 相对可达回报的倍数、贪心得分、饿死比例 | NaN 中止在 lr 2.5e-4 下不可能触发，所以不能用它来判定消融里的发散；中止的种子以前会从表里静默消失（幸存者偏差） |
 | （M6）CNN 的设备 | **已定（2026-10-20）：B 配置 `cuda`**，A 仍 `cpu`。基准见"M6 验收"：CNN 一次更新 GPU 2.6–2.7 ms，CPU 40–69 ms | MLP 上 CPU 更快的结论只对 MLP 成立。空闲 GPU 上 MLP 也不比 CPU 慢（1.59 对 1.71 ms） |
 | （M6）10×10 上 DQN 曲线中段的下跌 | **已检验（2026-10-20，10×10 批次）**：无回放的 `dqn_A_W10_noreplay_t31` 一样跌（且只回升到 18），去掉目标网络的也跌，B 的七个变体都不跌——"buffer 里只剩 ε=0.05 的数据"的假说被否定；见"M6 验收"10×10 段和下面（M7 之后）一行 | 下跌只在 A 上出现、与回放和目标网络无关 `[COMPUTED]`；但 A 在 ε 到底前就到平台而 B 没有，"A 特有"与"ε 到底前到平台的 run 特有"分不开 |
-| （M10）矩阵的更新预算 | 默认仍是 G=32；时间不够时用 G=4（每 run 便宜约 8 倍，8×8 上低约 0.5 分），并在报告里写明 | 见“M5 验收”第 4 点 |
-| （M10 之前）`aggregate` | 加 `--last-steps`（按步数而不是按评估次数取尾部，让不同评估间隔的实验可比）；`_last_k_summary` 校验各种子的尾部是同样的步数 | 现在“最后 5 次评估”对 DQN 是 51k 步、对表格 Q 是 100k / 200k 步；等跨度重算 DQN 的数字不变（16.06 ± 0.60、20.44 ± 1.49） |
+| （M10）矩阵的更新预算 | **定案（2026-10-22）**：全矩阵按 G=32 跑完，没有砍预算（10×10 补齐的 4 条也是 G=32，每条 5 进程约 40 分钟） | 见"M5 验收"第 4 点 |
+| （M10 之前）`aggregate` | **已做（2026-10-22）**：`--last-steps S`（含端点的尾部窗口），last-k / last-steps 都校验各种子的尾部是同样的 `env_steps`；报告主表仍用 last-5（与 M5 起的全部表同口径），last-steps 作为不同评估间隔实验（DQN 对表格 Q）的对照口径 | 现在"最后 5 次评估"对 DQN 是 51k 步、对表格 Q 是 100k / 200k 步；等跨度重算 DQN 的数字不变（`dqn_A_W8` 两种口径都是 16.07 ± 0.64） |
 | Part C / 报告的结果表口径 | 主列写“最后 5 次评估的平均”，括号里给“最后一次评估”；加一条脚注：所有 ± 都以同一批 100 个评估棋盘为条件，绝对分数另有约 ±1 的棋盘抽样不确定性（各行同向，不影响比较） | 最后一次评估的跨种子区间里，评估噪声和快照抖动占了一大半（单个 100 局均值的标准误 0.54，种子间标准差 0.71） |
 | Resource-first 的适用范围（2026-10-08） | 只约束 M6 起的新代码；M0–M5 不按 resource 重写 | Part C 的数字由现有代码产生；resource 里没有向量化环境、等价门禁、观测编码这类可替换的东西。映射见 `docs/RESOURCE_BASELINE.md` |
 | （M6 之后）"无回放"的第二种定义 | 默认不加。如果报告需要把"回放的混合作用"和"更新次数"彻底分开，再加一种"同样 32 次更新/vec-step，但只对本 vec-step 的 128 条新鲜转移反复更新"的模式：去掉 `grad_steps_per_vec_step` 在 `replay: false` 下必须为 null/1 的校验，循环 G 次 `update(own)`，改一个测试 | 现有定义（1 次更新）与 M5 的 G=1 对照、本次的 `_G1` / `_t31` 对照合起来已能分离更新次数和目标网络周期两个因素；第二种定义会把"同一批数据反复过 32 遍"这种有回放时不会出现的过拟合引进来，解释更难 |
@@ -716,7 +736,7 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 | （M7）γ=0.99 下估计持续上升的原因 | 默认不另跑，报告写成 `[INFERRED, MED]`"目标网络同步太频繁使 Double 失效 / bootstrap 漂移"；若有预算，B8 γ=0.99 加两条：`target_update_every` 30000 和 1（各 5 种子、23–28 分钟一条） | 两条曲线能分开"max 偏差"与"自举漂移"两个候选；现有证据：Double 减三分之一，上升在减速（增量递减），斜率 n=5 下分不开 |
 | （M7）Dueling 的参数量混淆 | 默认接受（8×8 B 上 216 万 → 426 万，10×10 334 万 → 660 万），报告里写明；结果（"M7 验收"第 5 点）得分不变、B8 高估 −0.08，参数翻倍没有换来得分，所以等参数量的对照没有必要为得分再跑；只是 −0.08 的高估减少归于分解还是参数翻倍分不开 | Wang 的结构就是两个流各自一层；等参数量的对照不是论文的做法 |
 | （M7）PER 的超参 | α=0.6、β₀=0.4、ε=1e-6（Schaul 的 Atari 值），不调；**结果暴露 IS 权重按 buffer 最小优先级归一化在这个环境里把加权损失和梯度范数压掉三个数量级；Adam 把尺度抵消掉，实际步长只小 1.4–1.5 倍，改变的是 batch 内的相对加权和拿到梯度的参数比例**（"M7 验收"第 6 点）。默认：实现不改、报告写明这是文献式子在小 |δ| 环境里的已知弱点；若要一条公平的 PER 曲线，加 `per_weight_norm: buffer|batch` 开关（Dopamine 的 batch 内归一化）或 `per_eps: 1e-2`，B8 上各跑一条（25 分钟） | PER 是最先砍的轴；现在的曲线回答的是"按文献实现的 PER 在这里怎样"，不是"优先级采样有没有用" |
-| （M6→M8/M10）`grad_steps_per_vec_step` 的默认值 | 主线配置不改（仍 n_envs/4 = 32），保证与 8×8、Part C 的全部结果可比；把 `G1_t31`（每 vec-step 1 次更新、目标周期 31 次更新 ≈ 4k 环境步）作为一条命名配置写进报告和 M10 的矩阵（10×10 上 23.03 对 20.69，1/32 的更新、1/15 的墙钟）；M8 的奖励轴若在 10×10 上预算紧，用它跑 | 10×10 上这是最大的单一效应，但 8×8 上 512k 步时它还没追上主配置；中途换默认值会让已有的 8×8 实验失去可比性 |
+| （M6→M8/M10）`grad_steps_per_vec_step` 的默认值 | **已按此做（2026-10-22）**：主线配置不改（仍 n_envs/4 = 32）；`G1_t31` 是 `analysis/matrix.py` 里 `budget` 组的命名配置（`dqn_B8_W8_G1_t31`、`dqn_B8_W10_G1_t31`），报告的更新预算表 / 图（`budget_W8`、`budget_W10`）把它与主配置并列 | 10×10 上这是最大的单一效应，但 8×8 上 512k 步时它还没追上主配置；中途换默认值会让已有的 8×8 实验失去可比性 |
 | （M7 之后）10×10 得分曲线中段下跌的解释 | 默认按"M7 验收"第 4 点写成 `[INFERRED, MED]`：ε 到底后在线数据纠正 ε 阶段学到的乐观值、贪心策略随之变保守；10×10 批次已排除回放与目标网络（上一行），估计回落与得分下跌在 A 的三个变体里都重合；坐实还要 M8 的按状态类别拆的高估分析 | 证据仍只是时间上重合，但已没有别的候选机制 |
 
 ## 偏离 Part B 的记录
@@ -770,3 +790,4 @@ M5 调用方要自己负责的事（审查探针的结论，写 M5 时照做）�
 - 2026-10-21（M8 的 R0 行为分析）：用新模块跑了已有 R0 run 与三条基线的行为分析（`runs/behaviour/`，命令在会话临时目录 `m8_r0_behaviour.sh`），结果填进"M8 验收"：所有 agent 穿中不贴边；R0 下早期 checkpoint 32% 的局在尾段循环、最终 0.4%，这是 R3 hacking 判据的基线；GPU run 的行为分析得分与 final_eval 差 ≤ 0.03（单观测对批量前向）。
 - 2026-10-22（M8 批次与结果）：16 条奖励轴批次由用户的 bypass 窗口用 `m8_queue.sh` 脱离会话跑完（00:01–02:57，80 个 run 全 rc=0，git `af580ff`）。分析：得分表 / 学习曲线 / 死因演变图（`m8_tables.sh`）、22 条行为分析（`m8_behaviour.sh`：16 个最终 checkpoint + R3 探针的 early / mid）、配对差（`m7_analysis.py`）、行为汇总（`m8_behaviour_summary.py`），结果写进"M8 验收"（两张表 + 8 点）。主要发现：奖励设计对得分的作用都在 ±1.4 分内；R2 势函数塑形开局最快但在 B8 上最终最差（−1.1；机制候选：吃食步的 Φ 用新食物算，吃食奖励变成 0.69 ± 0.19 的随机量）；非对称 R3 在 B8 γ=0.99 上 23.5 分，点估计首次高于 BFS 但分不开；**没有 reward hacking**（最终循环比例 0.2–0.8%，与 R0 同量级；靠近 +0.01 的循环价值 ≈ 0.5 比吃食回报小 10–20 倍）；H=1000 对 A 是空操作（模型逐字节相同）；R1 无自杀；训练局几乎从不触发饥饿截断。待拍板加一行（closer=0.1 的探针）、改两行；里程碑表 M8 改为完成。下一步 M10。
 - 2026-10-22（M8 审查）：M8 结果段经独立审查（`runs/review/m8/review.md`）：数字几乎全部一致；推翻 / 改正五处推理（R2 的噪声机制并入 −Φ 没学准；R3 略好是选窗口；H=1000 在 B8 上也近乎空操作、录像案例是 R3 同一局的加长版；hacking 判据改用循环中的 Q 估计——11.3 对 0.5，是陷阱；A 早期死因读错），改了 10 处小数字；待拍板的探针行降为 `[INFERRED, MED]` 并加了 closer=0.1 的注意事项。里程碑 M8 关闭，下一步 M10。
+- 2026-10-22（M10 代码）：M10 在 worktree `../snake-rl-m10`（分支 `m10`）上做，主检出不动（队列在跑）。做法同前：规格（`M10_SPEC.md`，会话临时目录）→ 独立 agent 写 7 个测试文件（164 项）、我同时写实现。代码：`aggregate --last-steps`、尾部校验、通配 / 重复标签 / 可比性告警、`IGNORED_SETTINGS`；新模块 `analysis/matrix.py`（矩阵即数据，64 行 + 6 基线，`--status` / `--commands`）、`analysis/report.py`（25 项，一条命令出全部表和图）；`scripts/export_logs.py`；`notebooks/results.ipynb`；`run_matrix.py` 用本检出的包。README、PLAN §2、RESOURCE_BASELINE 已更新。全量 1880 项通过。补齐矩阵的 5 条批次（`m10_queue.sh`）由用户的 bypass 窗口 14:29 起跑，第 1 条 10×10 B8 γ0.99 15:08 跑完：25.72 ± 0.83，对 γ0.9 配对 +5.03 [+4.26, +5.80]（5/5）。

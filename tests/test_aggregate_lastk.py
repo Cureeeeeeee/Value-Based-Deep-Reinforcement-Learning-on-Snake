@@ -140,10 +140,13 @@ def test_last_k_names_the_run_that_is_too_short(tmp_path):
     exp = tmp_path / "ragged"
     write_run(exp, 0, FIVE_SEEDS[1], [(0, 0.0), (100, 1.0), (200, 2.0)])
     write_run(exp, 1, FIVE_SEEDS[2], [(0, 0.0), (100, 1.0)])
-    assert summarise_experiment(exp, last_k=2)["lastk_per_seed"] == [1.5, 0.5]
     with pytest.raises(ValueError) as exc:
         summarise_experiment(exp, last_k=3)
     assert str(exp / "1" / "metrics.csv") in str(exc.value) and "2 evaluation row(s)" in str(exc.value)
+    # M10: the last two rows of seed 0 are at env_steps 100, 200, of seed 1 at 0, 100 - the seeds would be
+    # compared over different steps, which is refused (before M10 this returned [1.5, 0.5]).
+    with pytest.raises(ValueError, match="same steps"):
+        summarise_experiment(exp, last_k=2)
 
 
 def test_last_k_needs_the_score_column(tmp_path):

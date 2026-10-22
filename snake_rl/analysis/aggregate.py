@@ -54,6 +54,23 @@ still the unit of replication: averaging k evaluations of one seed reduces
 the checkpoint-to-checkpoint noise inside that seed, it does not create k
 replicates. Baselines have no evaluation curve; their cell is ``n/a``.
 
+Last-steps summary (M10, ``last_steps`` / ``--last-steps S``): the same, but
+the tail is taken by environment steps instead of by evaluation count - the
+rows with ``env_steps >= last - S`` (inclusive; ``last`` is the run's final
+``env_steps``), so that experiments with different evaluation intervals (a
+DQN evaluates every 12 800 steps, a tabular run every 25 000 or 50 000) are
+compared over the same span of training. ``last_k`` and ``last_steps`` are
+alternatives. For both, the tail rows of every seed must sit at the same
+``env_steps`` (a ``ValueError`` otherwise): the seeds are compared over the
+same steps or not at all.
+
+Every row records where it was evaluated (``evaluation``: board size, the
+evaluation seed and the episode count); :func:`results_table` warns once
+when its rows do not agree, so an 8x8 row does not sit silently next to a
+10x10 row. Labels in one table must be unique. ``agent.keep_checkpoints``
+(whether weight files are kept) is not part of a configuration
+(``IGNORED_SETTINGS``): runs that differ only in it are replicates.
+
 Value curve (M7, :func:`value_curve`). For DQN runs the metrics also carry,
 per evaluation, the network's value estimate ``max_a Q`` on the states the
 greedy policy visits and the discounted return it then realises from them
@@ -65,24 +82,27 @@ the Double DQN study), with the same seed-level Student-t intervals.
 CLI::
 
     python -m snake_rl.analysis.aggregate [--baseline FILE ...] [--exp DIR ...] [--out FILE.md] [--curves-dir DIR]
-                                          [--last-k K]
+                                          [--last-k K | --last-steps S]
 
 prints the results table (baselines first, in the order given, then
 experiments), ``--out`` also writes it to a file and ``--curves-dir`` writes
 ``<exp name>_curve.csv`` per experiment, e.g. ``--baseline
 runs/baselines/bfs_W10_relative.json --exp runs/tabular_q_W10 --out
-runs/tables/part_c.md --curves-dir runs/tables``. Without ``--last-k`` the
-table has no last-k column.
+runs/tables/part_c.md --curves-dir runs/tables``. Without ``--last-k`` /
+``--last-steps`` the table has no tail column. A ``--exp`` or ``--baseline``
+argument with ``*``, ``?`` or ``[`` is a glob pattern (``--exp
+"runs/dqn_A_W8_R[123]"``), expanded in sorted order; no match is an error.
 """
 
 from __future__ import annotations
 
 import argparse
+import glob
 import math
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -258,6 +278,11 @@ def load_runs(exp_dir: str | Path) -> list[RunResult]:
 #: Top-level keys of ``config.yaml`` that may differ between the runs of one
 #: experiment: the ``run`` block (seed, git, start time, argv) and the name.
 _PER_RUN_KEYS = ("run", "exp")
+#: Dotted settings that are not part of a configuration: they decide what a
+#: run writes, not what it learns. Runs that differ only in these are
+#: replicates (M10; ``scripts/run_matrix.py`` and ``matrix.py`` use the same
+#: tuple).
+IGNORED_SETTINGS = ("agent.keep_checkpoints",)
 _ABSENT = object()
 
 
@@ -277,9 +302,17 @@ def _require_one_configuration(exp_dir: Path, runs: Sequence[RunResult]) -> None
     The seed is the only thing that may differ between the replicates of a
     row; a run started with another ``--set`` under the same experiment name
     is not a replicate. Compared: every key of ``config.yaml`` except the
-    ``run`` block and ``exp``, as written (a key missing in one file differs).
+    ``run`` block, ``exp`` and ``IGNORED_SETTINGS``, as written (a key
+    missing in one file differs).
     """
-    settings = [_flat_settings({k: v for k, v in r.config.items() if k not in _PER_RUN_KEYS}) for r in runs]
+    settings = [
+        {
+            key: value
+            for key, value in _flat_settings({k: v for k, v in r.config.items() if k not in _PER_RUN_KEYS}).items()
+            if key not in IGNORED_SETTINGS
+        }
+        for r in runs
+    ]
     first, first_dir = settings[0], runs[0].run_dir.name
     differences = []
     for run, other in zip(runs[1:], settings[1:]):
@@ -296,34 +329,109 @@ def _require_one_configuration(exp_dir: Path, runs: Sequence[RunResult]) -> None
 
 
 # ----------------------------------------------------------------- summaries
+def _check_positive_int(name: str, value: Any) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < 1:
+        raise ValueError(f"{name} must be an integer >= 1, got {value!r}")
+
+
 def _check_last_k(last_k: int) -> None:
-    if isinstance(last_k, bool) or not isinstance(last_k, (int, np.integer)) or last_k < 1:
-        raise ValueError(f"last_k must be an integer >= 1, got {last_k!r}")
+    _check_positive_int("last_k", last_k)
+
+
+def _tail_rows(
+    runs: Sequence[RunResult], select: Callable[[Path, np.ndarray], np.ndarray], what: str
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Per run, ``(env_steps, eval_mean_score)`` of its tail rows, in file order.
+
+    ``select(metrics path, env_steps) -> boolean mask`` picks the rows.
+    ``ValueError`` if a column is missing, a selected score is not finite, or
+    the tails of two runs are not at the same ``env_steps``: the seeds are
+    compared over the same steps or not at all (``what`` names the tail in
+    the message, e.g. ``"last 5 evaluations"``).
+    """
+    tails: list[tuple[np.ndarray, np.ndarray]] = []
+    for r in runs:
+        path = r.run_dir / METRICS_FILE
+        missing = {"env_steps", "eval_mean_score"} - set(r.metrics.columns)
+        if missing:
+            raise ValueError(f"{path}: missing column(s) {sorted(missing)}")
+        steps = r.metrics["env_steps"].to_numpy(dtype=np.int64)
+        scores = r.metrics["eval_mean_score"].to_numpy(dtype=np.float64)
+        if steps.size == 0:
+            raise ValueError(f"{path}: no evaluation rows")
+        mask = select(path, steps)
+        tail_steps, tail_scores = steps[mask], scores[mask]
+        if not np.isfinite(tail_scores).all():
+            raise ValueError(f"{path}: eval_mean_score is not a finite number in the {what}")
+        tails.append((tail_steps, tail_scores))
+    first_steps = tails[0][0]
+    for r, (steps, _) in zip(runs[1:], tails[1:]):
+        if steps.shape != first_steps.shape or not np.array_equal(steps, first_steps):
+            raise ValueError(
+                f"{runs[0].run_dir.parent}: the {what} of {runs[0].run_dir.name} are at env_steps "
+                f"{first_steps.tolist()} but of {r.run_dir.name} at {steps.tolist()}; the seeds must be compared "
+                f"over the same steps"
+            )
+    return tails
 
 
 def _last_k_summary(runs: Sequence[RunResult], last_k: int) -> dict[str, Any]:
     """The keys ``last_k`` adds to a summary row (see :func:`summarise_experiment`)."""
     _check_last_k(last_k)
-    per_seed = []
-    for r in runs:
-        path = r.run_dir / METRICS_FILE
-        if "eval_mean_score" not in r.metrics.columns:
-            raise ValueError(f"{path}: missing column(s) ['eval_mean_score']")
-        scores = r.metrics["eval_mean_score"].to_numpy(dtype=np.float64)
-        if scores.size < last_k:
-            raise ValueError(f"{path}: {scores.size} evaluation row(s), fewer than last_k = {last_k}")
-        tail = scores[-last_k:]  # file order: the training loop appends one row per evaluation
-        if not np.isfinite(tail).all():
-            raise ValueError(f"{path}: eval_mean_score is not a finite number in the last {last_k} row(s)")
-        per_seed.append(float(tail.mean()))
+
+    def select(path: Path, steps: np.ndarray) -> np.ndarray:
+        if steps.size < last_k:
+            raise ValueError(f"{path}: {steps.size} evaluation row(s), fewer than last_k = {last_k}")
+        mask = np.zeros(steps.size, dtype=bool)
+        mask[-last_k:] = True  # file order: the training loop appends one row per evaluation
+        return mask
+
+    tails = _tail_rows(runs, select, f"last {last_k} evaluations")
+    per_seed = [float(scores.mean()) for _, scores in tails]
     mean, ci = mean_ci95(per_seed)  # the seed is the unit of replication, as for the final evaluation
     return {"last_k": int(last_k), "lastk_mean_score": mean, "lastk_ci95": ci, "lastk_per_seed": per_seed}
 
 
+def _last_steps_summary(runs: Sequence[RunResult], last_steps: int) -> dict[str, Any]:
+    """The keys ``last_steps`` adds to a summary row (see :func:`summarise_experiment`)."""
+    _check_positive_int("last_steps", last_steps)
+
+    def select(path: Path, steps: np.ndarray) -> np.ndarray:
+        return steps >= steps[-1] - last_steps  # inclusive: the last row always qualifies
+
+    tails = _tail_rows(runs, select, f"last {last_steps} env steps")
+    per_seed = [float(scores.mean()) for _, scores in tails]
+    mean, ci = mean_ci95(per_seed)
+    return {
+        "last_steps": int(last_steps),
+        "laststeps_mean_score": mean,
+        "laststeps_ci95": ci,
+        "laststeps_per_seed": per_seed,
+        "laststeps_n_rows": [int(steps.size) for steps, _ in tails],
+    }
+
+
+def _evaluation_of(env: Any, eval_seed: int, n_episodes: int | None) -> dict[str, Any]:
+    """The ``evaluation`` key of a summary row: where the row was evaluated."""
+    return {"W": env.get("W") if isinstance(env, dict) else None, "eval_seed": eval_seed, "n_episodes": n_episodes}
+
+
 def _summarise_runs(
-    runs: Sequence[RunResult], label: str, last_k: int | None = None, aborted: Sequence[str] = ()
+    runs: Sequence[RunResult],
+    label: str,
+    last_k: int | None = None,
+    aborted: Sequence[str] = (),
+    last_steps: int | None = None,
 ) -> dict[str, Any]:
+    if last_k is not None and last_steps is not None:
+        raise ValueError("last_k and last_steps are alternatives: give one of them")
     finals = [r.final for r in runs]
+    boards = {(f.env.get("W") if isinstance(f.env, dict) else None, f.seed) for f in finals}
+    if len(boards) != 1:
+        raise ValueError(
+            f"{runs[0].run_dir.parent}: the finished runs were not evaluated on one board / evaluation seed: "
+            f"{sorted(boards, key=str)}"
+        )
     per_seed_means = [f.mean_score for f in finals]
     mean, ci = mean_ci95(per_seed_means)  # the seed is the unit of replication
     counts = [len(f.episodes) for f in finals]
@@ -348,14 +456,17 @@ def _summarise_runs(
         "cause_fractions": pooled["cause_fractions"],
         "n_aborted": len(aborted),
         "aborted": list(aborted),
+        "evaluation": _evaluation_of(finals[0].env, finals[0].seed, counts[0] if len(set(counts)) == 1 else None),
     }
     if last_k is not None:
         summary.update(_last_k_summary(runs, last_k))
+    if last_steps is not None:
+        summary.update(_last_steps_summary(runs, last_steps))
     return summary
 
 
 def summarise_experiment(
-    exp_dir: str | Path, label: str | None = None, last_k: int | None = None
+    exp_dir: str | Path, label: str | None = None, last_k: int | None = None, last_steps: int | None = None
 ) -> dict[str, Any]:
     """Across-seed summary of the final evaluation of one experiment.
 
@@ -373,12 +484,30 @@ def summarise_experiment(
     per-seed numbers; ``lastk_ci95``, their Student-t half-width (nan for one
     seed). ``ValueError`` if ``last_k < 1`` or a run has fewer rows. Without
     ``last_k`` the dict is exactly the one described above.
+
+    With ``last_steps`` (an alternative to ``last_k``; both is a
+    ``ValueError``) the tail of every seed is the rows with ``env_steps >=
+    last - last_steps`` (inclusive, ``last`` = the run's final ``env_steps``),
+    and the dict gains ``last_steps``, ``laststeps_per_seed``,
+    ``laststeps_mean_score``, ``laststeps_ci95`` and ``laststeps_n_rows``
+    (tail rows per seed). For both kinds of tail the tail rows of all seeds
+    must sit at the same ``env_steps``, else ``ValueError``.
+
+    Every dict carries ``evaluation`` (``W``, ``eval_seed``, ``n_episodes``),
+    read from the final evaluation of the first seed; the seeds of one
+    experiment must agree on the board and the evaluation seed.
     """
+    if last_k is not None and last_steps is not None:
+        raise ValueError("last_k and last_steps are alternatives: give one of them")
     if last_k is not None:
         _check_last_k(last_k)  # before any file is read
+    if last_steps is not None:
+        _check_positive_int("last_steps", last_steps)
     exp_dir = Path(exp_dir)
     scan = scan_experiment(exp_dir, stacklevel=3)
-    return _summarise_runs(scan.runs, label if label is not None else exp_dir.resolve().name, last_k, scan.aborted)
+    return _summarise_runs(
+        scan.runs, label if label is not None else exp_dir.resolve().name, last_k, scan.aborted, last_steps=last_steps
+    )
 
 
 def summarise_baseline(json_path: str | Path, label: str | None = None) -> dict[str, Any]:
@@ -410,7 +539,32 @@ def summarise_baseline(json_path: str | Path, label: str | None = None) -> dict[
         "cause_fractions": s["cause_fractions"],
         "n_aborted": 0,
         "aborted": [],
+        "evaluation": _evaluation_of(result.env, result.seed, s["n_episodes"]),
     }
+
+
+def _describe_evaluation(evaluation: dict[str, Any]) -> str:
+    n = evaluation.get("n_episodes")
+    return f"W {evaluation.get('W')}, eval_seed {evaluation.get('eval_seed')}, {n if n is not None else 'unequal'} episodes"
+
+
+def comparability_notes(rows: Sequence[dict[str, Any]]) -> list[str]:
+    """One note per row whose ``evaluation`` (board size ``W``, evaluation
+    seed, episode count) differs from the first row that has one; rows
+    without the key are skipped. Empty when all rows agree: their numbers
+    are then conditional on the same evaluation boards and comparable."""
+    with_eval = [r for r in rows if isinstance(r.get("evaluation"), dict)]
+    if not with_eval:
+        return []
+    first = with_eval[0]
+    notes = []
+    for r in with_eval[1:]:
+        if any(r["evaluation"].get(key) != first["evaluation"].get(key) for key in ("W", "eval_seed", "n_episodes")):
+            notes.append(
+                f"{r['label']}: {_describe_evaluation(r['evaluation'])} "
+                f"(first row {first['label']}: {_describe_evaluation(first['evaluation'])})"
+            )
+    return notes
 
 
 def results_table(rows: Sequence[dict[str, Any]]) -> str:
@@ -424,20 +578,46 @@ def results_table(rows: Sequence[dict[str, Any]]) -> str:
     If at least one row carries ``last_k`` (``summarise_experiment(...,
     last_k=k)``), a last column ``last-<k> evals mean +- 95% CI`` is appended;
     rows without it (baselines) show ``n/a`` there. Rows with different ``k``
-    in one table are a ``ValueError``. Without any such row the table is the
-    twelve-column table, unchanged.
+    in one table are a ``ValueError``. Rows carrying ``last_steps`` add the
+    column ``last-<S> steps mean +- 95% CI`` under the same rules; a table
+    mixing last-k rows and last-steps rows is a ``ValueError``. Without any
+    such row the table is the twelve-column table, unchanged.
+
+    Labels must be unique (``ValueError``). Rows that were not evaluated
+    under the same conditions (:func:`comparability_notes`) are reported in
+    one :class:`AggregateWarning`; the table is still returned.
     """
+    labels = [str(r["label"]) for r in rows]
+    duplicates = sorted({label for label in labels if labels.count(label) > 1})
+    if duplicates:
+        raise ValueError(f"labels must be unique within one table; {duplicates} occur more than once")
     last_ks = sorted({int(r["last_k"]) for r in rows if r.get("last_k") is not None})
+    last_steps = sorted({int(r["last_steps"]) for r in rows if r.get("last_steps") is not None})
+    if last_ks and last_steps:
+        raise ValueError("rows carry last_k and last_steps; one table has one tail column, last-k or last-steps")
     if len(last_ks) > 1:
         raise ValueError(f"rows carry different last_k values {last_ks}; one table has one last-k column")
+    if len(last_steps) > 1:
+        raise ValueError(f"rows carry different last_steps values {last_steps}; one table has one last-steps column")
+    notes = comparability_notes(rows)
+    if notes:
+        warnings.warn(
+            "rows were not evaluated under the same conditions: " + "; ".join(notes), AggregateWarning, stacklevel=2
+        )
+    # (key of the row, column title, mean key, half-width key)
+    tail: tuple[str, str, str, str] | None = None
+    if last_ks:
+        tail = ("last_k", f" last-{last_ks[0]} evals mean +- 95% CI |", "lastk_mean_score", "lastk_ci95")
+    elif last_steps:
+        tail = ("last_steps", f" last-{last_steps[0]} steps mean +- 95% CI |", "laststeps_mean_score", "laststeps_ci95")
     head = (
         "| label | seeds | episodes | score mean +- 95% CI | CI over | median | max | mean steps | "
         + " | ".join(CAUSES)
         + " |"
     )
-    if last_ks:
-        head += f" last-{last_ks[0]} evals mean +- 95% CI |"
-    lines = [head, "|" + "---|" * (8 + len(CAUSES) + len(last_ks))]
+    if tail is not None:
+        head += tail[1]
+    lines = [head, "|" + "---|" * (8 + len(CAUSES) + (1 if tail is not None else 0))]
     for r in rows:
         ci = r["ci95"]
         ci_text = f"{ci:.2f}" if ci is not None and math.isfinite(ci) else "n/a"
@@ -453,13 +633,13 @@ def results_table(rows: Sequence[dict[str, Any]]) -> str:
             f"| {label} | {seeds_text} | {episodes} | {r['mean_score']:.2f} +- {ci_text} | {r['ci_kind']} | "
             f"{r['median_score']:.1f} | {r['max_score']} | {r['mean_steps']:.1f} | {frac} |"
         )
-        if last_ks:
-            if r.get("last_k") is None:
+        if tail is not None:
+            if r.get(tail[0]) is None:
                 line += " n/a |"
             else:
-                k_ci = r["lastk_ci95"]
+                k_ci = r[tail[3]]
                 k_ci_text = f"{k_ci:.2f}" if k_ci is not None and math.isfinite(k_ci) else "n/a"
-                line += f" {r['lastk_mean_score']:.2f} +- {k_ci_text} |"
+                line += f" {r[tail[2]]:.2f} +- {k_ci_text} |"
         lines.append(line)
     return "\n".join(lines)
 
@@ -621,6 +801,21 @@ def value_curve(exp_dir: str | Path, which: str = "visited") -> pd.DataFrame:
 
 
 # ----------------------------------------------------------------------- CLI
+def _expand_patterns(p: argparse.ArgumentParser, args: Sequence[str]) -> list[str]:
+    """Each argument holding ``*``, ``?`` or ``[`` is a glob pattern, expanded
+    in sorted order (no match: parser error); the others are used as given."""
+    expanded: list[str] = []
+    for arg in args:
+        if any(ch in arg for ch in "*?["):
+            matches = sorted(glob.glob(arg))
+            if not matches:
+                p.error(f"no match for pattern {arg!r}")
+            expanded.extend(matches)
+        else:
+            expanded.append(arg)
+    return expanded
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Results table and learning curves from run directories.")
     p.add_argument("--baseline", nargs="+", action="extend", default=[], metavar="FILE",
@@ -632,18 +827,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--last-k", type=int, default=None, metavar="K",
                    help="add a column: mean +- 95%% CI over seeds of each seed's mean score over its last K "
                         "evaluations (default: off)")
+    p.add_argument("--last-steps", type=int, default=None, metavar="S",
+                   help="add a column: the same over each seed's evaluations in its last S environment steps "
+                        "(inclusive; an alternative to --last-k)")
     args = p.parse_args(argv)
     if not args.baseline and not args.exp:
         p.error("nothing to aggregate: give --baseline FILE and/or --exp DIR")
     if args.last_k is not None and args.last_k < 1:
         p.error(f"--last-k must be >= 1, got {args.last_k}")
+    if args.last_steps is not None and args.last_steps < 1:
+        p.error(f"--last-steps must be >= 1, got {args.last_steps}")
+    if args.last_k is not None and args.last_steps is not None:
+        p.error("--last-k and --last-steps are alternatives: give one of them")
+    baseline_files = _expand_patterns(p, args.baseline)
+    exp_dirs = _expand_patterns(p, args.exp)
+    names = [Path(d).resolve().name for d in exp_dirs]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        p.error(f"two experiments are named {duplicates[0]!r}: labels must be unique within one table")
 
-    rows = [summarise_baseline(f) for f in args.baseline]
+    rows = [summarise_baseline(f) for f in baseline_files]
     curves: dict[str, pd.DataFrame] = {}
-    for d in args.exp:
-        name = Path(d).resolve().name
+    for d, name in zip(exp_dirs, names):
         scan = scan_experiment(d)
-        rows.append(_summarise_runs(scan.runs, name, args.last_k, scan.aborted))
+        rows.append(_summarise_runs(scan.runs, name, args.last_k, scan.aborted, last_steps=args.last_steps))
         if args.curves_dir:
             if name in curves:
                 p.error(f"two experiments are named {name!r}: their curve files would overwrite each other")

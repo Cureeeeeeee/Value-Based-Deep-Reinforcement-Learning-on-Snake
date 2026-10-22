@@ -98,8 +98,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
-from snake_rl.config import ExperimentConfig, config_to_dict, load_config
-from snake_rl.train import CONFIG_FILE, FINAL_EVAL_FILE
+# The package of this checkout, ahead of an editable install that may point at
+# another checkout (a git worktree): a script in the repository plans with the
+# repository's own code.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from snake_rl.analysis.aggregate import IGNORED_SETTINGS  # noqa: E402
+from snake_rl.config import ExperimentConfig, config_to_dict, load_config  # noqa: E402
+from snake_rl.train import CONFIG_FILE, FINAL_EVAL_FILE  # noqa: E402
 
 PENDING, OK, FAILED, DONE, INCOMPLETE = "pending", "ok", "failed", "done", "incomplete"
 #: Seconds between two looks at the running processes.
@@ -199,7 +205,7 @@ def existing_status(run_dir: Path, cfg: ExperimentConfig) -> str:
         differences = [
             f"{key}: {there.get(key)!r} there, {here.get(key)!r} requested"
             for key in there | here
-            if there.get(key) != here.get(key)
+            if key not in IGNORED_SETTINGS and there.get(key) != here.get(key)
         ]
         if differences:
             raise ValueError(

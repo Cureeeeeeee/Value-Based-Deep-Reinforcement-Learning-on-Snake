@@ -56,12 +56,12 @@ snake-rl/
     config.py               # YAML 实验配置：加载、--set 覆盖、校验、种子布局（M4 新增）
     train.py                # 配置驱动；写 run 目录（config、seed、git hash、csv 日志、checkpoint）
     evaluate.py             # 贪心评估协议：100 局、固定评估种子、死因分解；标量版与向量化版（evaluate_batched）逐局相同
-    analysis/               # aggregate.py（从 run 目录生成结果表与学习曲线，跨种子 t 区间）、plots.py、behaviour.py（M8：热力图 / 循环统计 / 临死轨迹 / hacking 录像）
+    analysis/               # aggregate.py（从 run 目录生成结果表与学习曲线，跨种子 t 区间）、plots.py、behaviour.py（M8：热力图 / 循环统计 / 临死轨迹 / hacking 录像）、matrix.py（M10：实验矩阵即数据，对照 runs/ 的状态与缺失行的启动命令）、report.py（M10：一条命令出全部表和图）
     gui/app.py              # pygame：人玩 / agent 玩 + Q 值侧栏 / 回放
   configs/                  # 每个实验一份 yaml
   tests/                    # test_env.py test_vec_env.py test_obs.py test_rewards.py test_baselines.py；M4 起另有 test_tabular_q / test_train / test_evaluate_batched / test_aggregate / test_run_matrix 等
   scripts/run_matrix.py     # 批量跑种子 × 配置（另有 check_env.py、bench_vec_env.py、bench_update.py、backfill_values.py、gui_screenshots.py）
-  notebooks/results.ipynb   # Colab：从日志/checkpoint 重生成主图（提交要求）
+  notebooks/results.ipynb   # Colab：从日志/checkpoint 重生成主图（提交要求；M10 已建，日志由 scripts/export_logs.py 打包）
 ```
 
 关键结构决定：**两个环境实现共享 `obs.py`/`rewards.py`**，观测和奖励只写一遍；`core.py` 是"显然正确"的参考实现（给测试、GUI、答辩讲解用），`vec_env.py` 是训练引擎；`tests/test_vec_env.py` 强制两者逐步等价。

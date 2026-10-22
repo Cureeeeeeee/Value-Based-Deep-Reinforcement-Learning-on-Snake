@@ -65,7 +65,10 @@ snake_rl/
                  plots.py (evaluation-curve figure; --values: max-Q estimate vs realised return;
                  --causes: how evaluation episodes end over training),
                  behaviour.py (visit heat-maps, loop / reward-hacking statistics, last-steps
-                 figures and GUI recordings of hacking cases, from a checkpoint)
+                 figures and GUI recordings of hacking cases, from a checkpoint),
+                 matrix.py (the experiment matrix as data: every named configuration with its
+                 config file and overrides; status against runs/, launch commands for missing rows),
+                 report.py (every table and figure of the report from runs/ in one command)
   gui/app.py     pygame: human play (optionally with an advising agent) / agent play with the
                  live action-value panel / replay of recorded episodes; headless screenshots
 tests/           pytest; the scalar-vs-vectorised equivalence test is the regression gate
@@ -73,8 +76,10 @@ configs/         one yaml per experiment
 scripts/         check_env.py, bench_vec_env.py (env throughput), bench_update.py (one gradient step,
                  cpu vs cuda), run_matrix.py (seeds x grid batch runner), backfill_values.py (the
                  overestimation measurement for runs trained before M7, from their checkpoints),
-                 gui_screenshots.py (the Part D figures, rendered by the GUI without a window)
-notebooks/       Colab notebook regenerating the main figures from logs/checkpoints
+                 gui_screenshots.py (the Part D figures, rendered by the GUI without a window),
+                 export_logs.py (the logs of runs/ without weights, one zip for the notebook)
+notebooks/       results.ipynb: Colab notebook regenerating every table and figure from the
+                 exported logs (and a behaviour analysis when weights are present)
 runs/            training outputs (not in git)
 ```
 
@@ -143,7 +148,25 @@ python -m snake_rl.analysis.plots --exp "runs/tabular_q_W10=tabular Q-learning" 
 
 draws the evaluation curves (mean over seeds with a Student-t band; baselines as
 dashed lines). `aggregate --last-k 5` adds the mean of the last five evaluations
-per seed, which is less noisy than the last snapshot.
+per seed, which is less noisy than the last snapshot; `--last-steps 51200` takes
+the tail by environment steps instead, so runs with different evaluation
+intervals are compared over the same span of training. A `--exp` argument may
+be a glob pattern (`"runs/dqn_A_W8_R[123]"`); rows evaluated on different boards
+or episode counts are flagged with a warning.
+
+The whole report comes from one command. `snake_rl/analysis/matrix.py` lists
+every named configuration of the study (config file plus `--set` overrides),
+checks `runs/` against it and writes the launch lines for whatever is missing;
+`snake_rl/analysis/report.py` builds every table and figure from the run
+directories; `scripts/export_logs.py` packs the logs (no weights, about 12 MB)
+for `notebooks/results.ipynb`, which rebuilds the report on Colab:
+
+```powershell
+python -m snake_rl.analysis.matrix --status                      # finished seeds per configuration; config.yaml checked against the matrix
+python -m snake_rl.analysis.matrix --commands                    # scripts/run_matrix.py lines for the rows that lack seeds
+python -m snake_rl.analysis.report --out-dir runs/report         # tables/*.md, figures/*.png, index.md, manifest.json
+python scripts/export_logs.py --out runs_logs.zip                # the logs of runs/ for the notebook
+```
 
 Every DQN run also logs, at each evaluation, the network's value estimate
 `max_a Q` on the states its greedy policy visits and the discounted return it
