@@ -9,13 +9,19 @@ and `scripts/report_extra_figures.py`, and the paired differences quoted in the
 text are the ones recorded, independently re-computed and reviewed in
 `docs/PROGRESS.md` (sections "M4 验收" to "M10 验收"). Numbers are never typed
 in by hand; `runs/review/parte/verify_parte.py` checks the tables of this file
-against the run directories.
+against the run directories. The cover page, the table of contents and the
+page layout follow the copy of the document that the team edited on
+23 October 2026 (`../43008-Project-Part-E-TheDeadlyTriad_FILLED.docx`); the
+contribution statements of Appendix D are the ones the three members wrote
+into that copy.
 
 **Project title and number:** Value-Based Deep Reinforcement Learning on Snake: A Controlled Study of State Representation, Reward Design, and DQN Stabilisation — Project number: 48
 
 **Team name:** The Deadly Triad
 
 **Team members:** Yue Liu (25211451, Yue.Liu-14@student.uts.edu.au); Jiahao Liu (14191136, Jiahao.Liu-4@student.uts.edu.au); Siqin Jin (26145324, siqin.jin@student.uts.edu.au)
+
+**Date:** 23 October 2026
 
 **Code:** https://github.com/Cureeeeeeee/Value-Based-Deep-Reinforcement-Learning-on-Snake (environment, agents, analysis, GUI, 1,886 automated tests; `notebooks/results.ipynb` rebuilds every table and figure of this report from the exported logs on Colab)
 
@@ -433,17 +439,7 @@ Three things failed in the ordinary sense: the starvation-limit probe measured n
 
 On a self-built Snake environment with a fixed protocol, five seeds per configuration and paired statistics, we compared two state representations, four reward designs, the two DQN stabilisers and three refinements against non-learning references, in 64 configurations and 320 runs. The grid representation beats the 11-feature vector at the planned discount by 1.7 points on 8 × 8 and by nothing on 10 × 10, and the feature vector's level is that of a policy without look-ahead. The discount factor, not a planned axis, is the largest effect: γ = 0.99 adds five points to the convolutional agent on both boards, all of it survival, and brings it within the greedy planner's interval on the small board and 4.9 points short on the large one. Reward design moves the score by at most a point, and naive distance shaping is unexploited at two bonus sizes, as the agents' own value estimates show. The target network has no measurable benefit; the loss from removing replay decomposes into target staleness, mixing and replay ratio, and the best 10 × 10 agent at γ = 0.9 makes 32 times fewer gradient steps than the main line. Double DQN removes a third of the convolutional agent's overestimation at γ = 0.99 without changing the score; Dueling and PER change nothing. No agent learned what the Hamiltonian cycle knows, never to enclose itself, and that remains the gap between value-based learning and planning on this game. Every number in this report is regenerated from the run logs by one command.
 
-## Contributions
-
-Marks are to be allocated according to the contribution agreed below. [The three team members confirm this table before submission.]
-
-| Member | Contribution |
-|---|---|
-| Jiahao Liu (14191136) | Repository lead: environment (scalar and vectorised), observations and rewards, reference players, tabular Q-learning, DQN and its variants, evaluation protocol, experiment matrix and batch tooling, analysis and report generation, behaviour analysis, GUI, tests; ran all experiments; drafted Parts C, D and E. |
-| Yue Liu (25211451) | [to be agreed] |
-| Siqin Jin (26145324) | [to be agreed] |
-
-## References
+## 9 References
 
 1. Mnih, V., Kavukcuoglu, K., Silver, D., et al. (2015). Human-level control through deep reinforcement learning. *Nature*, 518(7540), 529–533.
 2. van Hasselt, H., Guez, A., and Silver, D. (2016). Deep reinforcement learning with double Q-learning. *Proceedings of the AAAI Conference on Artificial Intelligence*, 30(1), 2094–2100.
@@ -496,5 +492,31 @@ Table C1. Tabular Q-learning on 8 × 8, 500,000 steps, final greedy score (mean 
 | 0.02 | 14.77 ± 0.33 (0) | 15.29 ± 0.66 (0) | 14.58 ± 0.68 (0) | 14.61 ± 1.11 (0) |
 | 0.1 | 16.02 ± 0.93 (1) | 15.51 ± 0.59 (1) | 15.45 ± 1.38 (2) | 14.29 ± 2.03 (21) |
 | 0.3 | 16.00 ± 1.27 (0) | 15.48 ± 1.25 (6) | 15.32 ± 1.04 (22) | 12.79 ± 3.43 (82) |
+
+## Appendix D: Contribution
+
+#### A. Individual Contribution
+
+| Team Member Name | Contribution |
+|---|---|
+| Jiahao Liu (14191136) | Repository lead: environment (scalar and vectorised), observations and rewards, reference players, tabular Q-learning, DQN and its variants, evaluation protocol, experiment matrix and batch tooling, analysis and report generation, behaviour analysis, GUI, tests; ran all experiments; drafted Parts C, D and E. |
+| Yue Liu (25211451) | This report was reviewed and revised. I also collaborated with the team members to complete the code implementation and subsequent corrections. |
+| Siqin Jin (26145324) | Reviewed the final code and cross-checked its consistency with the methods and experiment settings described in the report; searched for and reviewed relevant literature on DQN and its stabilisation techniques; checked references and figure captions; and contributed to proofreading and revising the final report. |
+
+#### B. Individual Contribution Split
+
+| Team Member Name | Percentage |
+|---|---|
+| Jiahao Liu (14191136) | 40% |
+| Yue Liu (25211451) | 30% |
+| Siqin Jin (26145324) | 30% |
+
+All the team members have discussed and agreed on the above individual contribution to the project.
+
+Jiahao Liu : [Signature]
+
+Yue Liu : [Signature]
+
+Siqin Jin : [Signature]
 
 <!-- END -->
