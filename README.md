@@ -81,11 +81,16 @@ scripts/         check_env.py, bench_vec_env.py (env throughput), bench_update.p
                  gui_screenshots.py (the Part D figures, rendered by the GUI without a window),
                  export_logs.py (the logs of runs/ without weights, one zip for the notebook),
                  report_extra_figures.py (the composite behaviour figures of the final report: heat-maps
-                 of several players on one colour scale, a three-panel death-cause figure)
-notebooks/       results.ipynb: Colab notebook regenerating every table and figure from the
-                 exported logs (and a behaviour analysis when weights are present); it also
-                 runs locally in VS Code or Jupyter on the .venv kernel, no install step needed;
-                 executed/results.ipynb is the same notebook run on the full logs, outputs included
+                 of several players on one colour scale, a three-panel death-cause figure),
+                 build_notebook.py (writes notebooks/results.ipynb from the package sources; --check)
+notebooks/       results.ipynb: the Part E notebook. The code of the study (the package modules of
+                 the environment, the players, the DQN, the configuration, the evaluation protocol
+                 and the training loop, inlined one per cell by scripts/build_notebook.py and kept
+                 identical to the package by a test), training in the session (the 8x8 tabular
+                 agent and two short DQN runs; TRAIN_MODE = "full" for the report's configurations),
+                 then every table and figure of the report regenerated from the exported logs and
+                 checked against the report text. Runs on Colab, or locally in VS Code / Jupyter on
+                 the .venv kernel; executed/results.ipynb is the same notebook run, outputs included
 runs/            training outputs (not in git)
 ```
 
@@ -169,8 +174,10 @@ the report's tables quote (paired differences on the same seeds, the comparison
 with BFS on the same boards, the overestimation gap, the behaviour statistics,
 the tabular sweep) and compares them with the report source cell by cell;
 `scripts/export_logs.py` packs the logs (no weights; about 15 MB zipped with the
-behaviour analyses) for `notebooks/results.ipynb`, which rebuilds every table
-and figure of the report and runs that comparison:
+behaviour analyses) for `notebooks/results.ipynb`, which carries the code of the
+study (the package modules inlined one per cell by `scripts/build_notebook.py`),
+trains in the session, rebuilds every table and figure of the report and runs
+that comparison:
 
 ```powershell
 python -m snake_rl.analysis.matrix --status                      # finished seeds per configuration; config.yaml checked against the matrix
@@ -178,6 +185,7 @@ python -m snake_rl.analysis.matrix --commands                    # scripts/run_m
 python -m snake_rl.analysis.report --out-dir runs/report         # tables/*.md, figures/*.png, index.md, manifest.json
 python -m snake_rl.analysis.report_tables --report docs/PartE-final-report.md   # Tables 3-9 and C1 of the report, checked against the text
 python scripts/export_logs.py --out runs_logs.zip --include-behaviour           # the logs of runs/ for the notebook
+python scripts/build_notebook.py                                 # notebooks/results.ipynb from the package sources (--check: is it up to date)
 ```
 
 Every DQN run also logs, at each evaluation, the network's value estimate

@@ -13,3 +13,5 @@ Thumbs.db
 *.egg-info/
 build/
 dist/
+runs_notebook/
+runs_logs.zip
