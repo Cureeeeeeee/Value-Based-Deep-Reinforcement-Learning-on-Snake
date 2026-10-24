@@ -5,11 +5,13 @@ results notebook (M10).
 analysis reads are small (about 12 MB for 300 runs): per run ``config.yaml``,
 ``metrics.csv``, ``final_eval.json``, ``values.csv`` (backfilled value
 estimates) and ``aborted.json``; the baseline evaluations
-``runs/baselines/*.json``; optionally the behaviour analyses
-(``runs/behaviour/**``: tables, summaries, heat-maps and recordings, no
-weights). Weight files (``*.pt``, ``*.npz``, anything under ``checkpoints/``)
-and the regenerable outputs (``figures``, ``tables``, ``report``, ``review``,
-``bench``, ``recordings``, ``_interrupted``) are never included.
+``runs/baselines/*.json``; the GUI screenshot behind Figure 1 of the report
+(``runs/figures/partD_gui_agent.png``, which needs weights to render);
+optionally the behaviour analyses (``runs/behaviour/**``: tables, summaries,
+heat-maps and recordings, no weights). Weight files (``*.pt``, ``*.npz``,
+anything under ``checkpoints/``) and the regenerable outputs (``figures``
+except that screenshot, ``tables``, ``report``, ``review``, ``bench``,
+``recordings``, ``_interrupted``) are never included.
 
 Entries are ``runs/<...>`` paths relative to the parent of the runs
 directory, so unzipping at the repo root recreates ``runs/`` as the analysis
@@ -36,6 +38,8 @@ BEHAVIOUR_SUFFIXES = (".json", ".csv", ".png", ".md", ".npy")
 BASELINES_DIR = "baselines"
 BEHAVIOUR_DIR = "behaviour"
 CHECKPOINTS_DIR = "checkpoints"
+#: Files under the excluded directories that the notebook shows and cannot regenerate from the logs.
+REPORT_FILES = ("figures/partD_gui_agent.png",)
 
 
 def select_entries(runs_dir: str | Path, include_behaviour: bool = False) -> list[Path]:
@@ -64,6 +68,7 @@ def select_entries(runs_dir: str | Path, include_behaviour: bool = False) -> lis
                 keep = name in LOG_FILES
             if keep:
                 entries.append(rel_root / name)
+    entries += [Path(rel) for rel in REPORT_FILES if (runs_dir / rel).is_file()]
     return sorted(entries, key=lambda p: p.as_posix())
 
 

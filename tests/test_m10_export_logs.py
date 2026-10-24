@@ -47,6 +47,7 @@ KEPT = [
     "dqn_A_W8/1/aborted.json",
     "dqn_A_W8/1/config.yaml",
     "dqn_A_W8/1/metrics.csv",
+    "figures/partD_gui_agent.png",
     "sweep_tabular_W8/alpha=0.1/0/config.yaml",
     "sweep_tabular_W8/alpha=0.1/0/final_eval.json",
     "sweep_tabular_W8/alpha=0.1/0/metrics.csv",
@@ -129,6 +130,7 @@ def test_constants():
     assert el.LOG_FILES == ("config.yaml", "metrics.csv", "final_eval.json", "values.csv", "aborted.json")
     assert el.EXCLUDED_DIRS == ("_interrupted", "bench", "figures", "recordings", "report", "review", "tables")
     assert el.BEHAVIOUR_SUFFIXES == (".json", ".csv", ".png", ".md", ".npy")
+    assert el.REPORT_FILES == ("figures/partD_gui_agent.png",)
 
 
 # ---------------------------------------------------------------- export_logs
@@ -138,7 +140,10 @@ def test_export_keeps_the_log_files_and_nothing_else(runs, tmp_path):
     names = names_in(out)
     assert names == expected_entries()
     assert not any(n.endswith((".pt", ".npz")) or "/checkpoints/" in n for n in names)
-    assert not any(n.split("/")[1] in el.EXCLUDED_DIRS or n.split("/")[1] == "behaviour" for n in names)
+    report_files = {f"runs/{rel}" for rel in el.REPORT_FILES}
+    assert not any(n.split("/")[1] in el.EXCLUDED_DIRS or n.split("/")[1] == "behaviour"
+                   for n in names if n not in report_files)
+    assert "runs/figures/learning_curves.png" not in names  # the rest of runs/figures is regenerable
     assert "runs/baselines/old/bfs_W8_relative.json" not in names and "runs/baselines/notes.txt" not in names
     assert stats == {"files": len(KEPT), "runs": N_RUNS, "bytes": size_of(runs, KEPT)}
     assert all(type(v) is int for v in stats.values())
@@ -181,7 +186,7 @@ def test_unzipping_at_the_repo_root_recreates_runs(runs, tmp_path):
     root.mkdir()
     with zipfile.ZipFile(out) as zf:
         zf.extractall(root)
-    assert sorted(p.name for p in (root / "runs").iterdir()) == ["baselines", "dqn_A_W8", "sweep_tabular_W8"]
+    assert sorted(p.name for p in (root / "runs").iterdir()) == ["baselines", "dqn_A_W8", "figures", "sweep_tabular_W8"]
     assert sorted(p.name for p in (root / "runs" / "dqn_A_W8" / "0").iterdir()) == [
         "config.yaml", "final_eval.json", "metrics.csv", "values.csv"]
     assert sorted(p.name for p in (root / "runs" / "dqn_A_W8" / "1").iterdir()) == [

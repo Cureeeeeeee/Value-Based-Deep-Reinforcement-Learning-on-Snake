@@ -68,7 +68,9 @@ snake_rl/
                  figures and GUI recordings of hacking cases, from a checkpoint),
                  matrix.py (the experiment matrix as data: every named configuration with its
                  config file and overrides; status against runs/, launch commands for missing rows),
-                 report.py (every table and figure of the report from runs/ in one command)
+                 report.py (every generated table and figure of the report from runs/ in one command),
+                 report_tables.py (Tables 3-9 and C1 of the report: paired differences, BFS on the
+                 same boards, overestimation gap, behaviour statistics, sweep; compared with the text)
   gui/app.py     pygame: human play (optionally with an advising agent) / agent play with the
                  live action-value panel / replay of recorded episodes; headless screenshots
 tests/           pytest; the scalar-vs-vectorised equivalence test is the regression gate
@@ -160,15 +162,21 @@ or episode counts are flagged with a warning.
 The whole report comes from one command. `snake_rl/analysis/matrix.py` lists
 every named configuration of the study (config file plus `--set` overrides),
 checks `runs/` against it and writes the launch lines for whatever is missing;
-`snake_rl/analysis/report.py` builds every table and figure from the run
-directories; `scripts/export_logs.py` packs the logs (no weights, about 12 MB)
-for `notebooks/results.ipynb`, which rebuilds the report on Colab:
+`snake_rl/analysis/report.py` builds every generated table and figure from the
+run directories; `snake_rl/analysis/report_tables.py` computes the statistics
+the report's tables quote (paired differences on the same seeds, the comparison
+with BFS on the same boards, the overestimation gap, the behaviour statistics,
+the tabular sweep) and compares them with the report source cell by cell;
+`scripts/export_logs.py` packs the logs (no weights; about 15 MB zipped with the
+behaviour analyses) for `notebooks/results.ipynb`, which rebuilds every table
+and figure of the report and runs that comparison:
 
 ```powershell
 python -m snake_rl.analysis.matrix --status                      # finished seeds per configuration; config.yaml checked against the matrix
 python -m snake_rl.analysis.matrix --commands                    # scripts/run_matrix.py lines for the rows that lack seeds
 python -m snake_rl.analysis.report --out-dir runs/report         # tables/*.md, figures/*.png, index.md, manifest.json
-python scripts/export_logs.py --out runs_logs.zip                # the logs of runs/ for the notebook
+python -m snake_rl.analysis.report_tables --report docs/PartE-final-report.md   # Tables 3-9 and C1 of the report, checked against the text
+python scripts/export_logs.py --out runs_logs.zip --include-behaviour           # the logs of runs/ for the notebook
 ```
 
 Every DQN run also logs, at each evaluation, the network's value estimate
