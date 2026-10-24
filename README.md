@@ -83,7 +83,8 @@ scripts/         check_env.py, bench_vec_env.py (env throughput), bench_update.p
                  report_extra_figures.py (the composite behaviour figures of the final report: heat-maps
                  of several players on one colour scale, a three-panel death-cause figure)
 notebooks/       results.ipynb: Colab notebook regenerating every table and figure from the
-                 exported logs (and a behaviour analysis when weights are present);
+                 exported logs (and a behaviour analysis when weights are present); it also
+                 runs locally in VS Code or Jupyter on the .venv kernel, no install step needed;
                  executed/results.ipynb is the same notebook run on the full logs, outputs included
 runs/            training outputs (not in git)
 ```
