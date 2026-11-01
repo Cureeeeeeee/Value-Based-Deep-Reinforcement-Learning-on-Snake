@@ -132,11 +132,8 @@ causes_B8_W8_gamma099_R0R2R3）；Table 2 从 Part E PDF 截图。标题页与"�
 ### 2.1 演示前一天
 
 - [ ] `git status` 干净；`git pull`；`.venv\Scripts\python.exe -c "import torch, pygame; print(torch.__version__)"`。
-- [ ] 若不用本机：打演示包。克隆仓库，另外拷贝（保持相对路径，GUI 从 run 目录的 `config.yaml` 读环境配置）：
-  `runs/dqn_B8_W10_gamma099/0/{config.yaml,model.pt,final_eval.json,metrics.csv}`（53 MB；`checkpoints/` 2.1 GB 可不带，clip E 就不演）、
-  `runs/dqn_A_W10/0/`（45 MB）、`runs/tabular_q_W10/0/`（120 KB）、`runs/behaviour/dqn_B8_W10_gamma099_R3_final/`、
-  `runs/behaviour/dqn_B8_W10_gamma099_early/`、`runs/report/`（图 4.8 MB + 表）、`runs/export/runs_logs.zip`（15 MB，notebook 用）。
-  目标机器 `pip install -e .` 后 CPU 版 torch 即可（GUI 默认 `--device cpu`）。在目标机器上把 §2.2 的每条命令跑一遍。
+- [ ] 若不用本机：演示包 `runs/export/demo_pack.zip`（`python scripts/make_demo_pack.py` 生成，115 MB）解到目标机器的仓库克隆根目录，
+  `python scripts/demo_check.py` 全 PASS。macOS 的逐步安装与演示流程见 `docs/DEMO-macOS.md`（Mac 上收尾不用 `matrix --status`，演示包只有两个 run）。
 - [ ] 显示：Windows 缩放 100 % 或 125 %，关通知（专注助手），关 cs2 等占 GPU / CPU 的东西。
 - [ ] 预案资产在 U 盘 + 云端：视频 mp4、Part E PDF、`runs/figures/partD_gui_*.png`、§1.3 的各 clip。
 - [ ] 计时排练两遍（10 分钟版和 5 分钟版）。

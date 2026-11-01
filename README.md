@@ -82,7 +82,10 @@ scripts/         check_env.py, bench_vec_env.py (env throughput), bench_update.p
                  export_logs.py (the logs of runs/ without weights, one zip for the notebook),
                  report_extra_figures.py (the composite behaviour figures of the final report: heat-maps
                  of several players on one colour scale, a three-panel death-cause figure),
-                 build_notebook.py (writes notebooks/results.ipynb from the package sources; --check)
+                 build_notebook.py (writes notebooks/results.ipynb from the package sources; --check),
+                 make_demo_pack.py (the run directories, recordings and figures a live demonstration
+                 needs, from runs/ into one zip), demo_check.py (runs every demonstration command
+                 headless on the target machine and reports PASS / FAIL; see docs/DEMO-macOS.md)
 notebooks/       results.ipynb: the Part E notebook. The code of the study (the package modules of
                  the environment, the players, the DQN, the configuration, the evaluation protocol
                  and the training loop, inlined one per cell by scripts/build_notebook.py and kept
@@ -248,6 +251,15 @@ python -m snake_rl.gui.app --player bfs --seed 10000               # reference p
 python -m snake_rl.gui.app --replay runs/recordings/<file>.json    # re-simulate an episode saved with S
 python scripts/gui_screenshots.py                                  # the Part D figures, headless -> runs/figures/partD_gui_*.png
 ```
+
+Demonstrating on another machine (`runs/` is not in git): on the training
+machine `python scripts/make_demo_pack.py` writes `runs/export/demo_pack.zip`
+(about 115 MB: the two 10x10 agents, two CNN checkpoints, the tabular table,
+the recordings, the report tables and figures, the exported logs); unpack it
+at the root of a clone and run `python scripts/demo_check.py`, which runs every
+demonstration command headless and must print all PASS. The step-by-step
+guide for a macOS laptop, including the installation, is `docs/DEMO-macOS.md`;
+the presentation script and the viva notes are `docs/PartF-presentation.md`.
 
 The GUI runs the scalar `SnakeEnv` with the configuration of the player's run
 (board, observation, action mode, reward). Episodes use the evaluation seeds
