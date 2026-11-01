@@ -274,3 +274,55 @@ head -30 runs/report/index.md                                                   
 ```
 
 按键：Space 暂停/继续 · N 单步 · `=` / `-` 变速 · R 新局 · S 存录像 · Q 退出 · 人玩：方向键 / WASD。
+
+## 10. 让 Mac 上的 Claude Code 代劳
+
+§3 的安装可以交给 Mac 上的 Claude Code 做，但有三件事它做不了或不该做：需要点对话框 / 输密码的安装（Xcode 命令行工具、Homebrew），
+把演示包放到 Mac 上，以及最后用眼睛和键盘确认真窗口能用。
+
+### 10.1 人先做（约 15 分钟 + 下载时间）
+
+1. 终端里 `xcode-select --install`，弹窗点"安装"（给 git）。
+2. 装 Homebrew（会要开机密码）：`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`，
+   按它结尾的提示把 `brew shellenv` 那行加进 `~/.zprofile`，重开终端；然后 `brew install python@3.12`。
+   不想装 Homebrew 就用 python.org 的 3.12 安装器（§3 第 3 步方案 B）。
+3. 把 `demo_pack.zip` 放到 `~/Downloads/`（U 盘 / 网盘；若已挂成 GitHub Release，Claude Code 可以自己 `curl` 下载，见提示词）。
+   校验：`shasum -a 256 ~/Downloads/demo_pack.zip` 应为 `f0dc432887ef43b26f18f99e04412d759cfc853fee714ec6c50c29f99154f8fb`（115,325,347 字节，2026-11-02 版）。
+4. 把预案文件也放进 `~/Downloads/`：预录视频 mp4、Part E 的 PDF。
+5. 克隆仓库并在仓库目录里启动 Claude Code：
+   ```zsh
+   cd ~ && git clone https://github.com/Cureeeeeeee/Value-Based-Deep-Reinforcement-Learning-on-Snake.git snake-rl
+   cd ~/snake-rl && claude
+   ```
+6. 粘贴 §10.2 的提示词。之后它每次要跑 `pip` / `unzip` / `python` 会请求权限，逐个允许即可。
+
+### 10.2 粘贴给 Claude Code 的提示词
+
+```text
+这台 MacBook 是演示机，不是训练机。目标：按 docs/DEMO-macOS.md §3 把演示环境装好，
+让 `python scripts/demo_check.py` 打印 `11 / 11 passed`，然后开一个真窗口给我看。先读 docs/DEMO-macOS.md 全文。
+
+本会话的规则（覆盖 CLAUDE.md 里与 Windows / CUDA 有关的内容）：
+- 不装 CUDA 版 torch，不用 --index-url；`pip install -e .` 从 PyPI 装即可。不要运行 scripts/check_env.py（它检查 CUDA，在 Mac 上按设计失败）。
+- 先 `uname -m`。若是 x86_64（Intel），停下来告诉我，按文档 §8 之前先问我要不要继续。
+- 用 python3.12 建 .venv（`python3.12 -m venv .venv`）；系统自带的 python3 是 3.9，不能用；也不要用 3.14。
+- 演示包在 ~/Downloads/demo_pack.zip，先 `shasum -a 256` 核对
+  f0dc432887ef43b26f18f99e04412d759cfc853fee714ec6c50c29f99154f8fb，再 `unzip ~/Downloads/demo_pack.zip -d ~/snake-rl`，
+  解完 `ls runs` 应有 8 个目录（baselines behaviour dqn_A_W10 dqn_B8_W10_gamma099 export figures report tabular_q_W10）。
+- 不改 snake_rl/ 和 scripts/ 下的代码，不训练（demo_check 自带的 smoke 训练除外），不 commit，不 push；
+  不跑全量 pytest，只跑 `pytest -q tests/test_gui.py`。
+- 任一步失败：把命令和输出的最后 20 行原样给我，对照文档 §7 的预案表处理；不要为了让检查通过而改代码或改测试。
+
+做完后汇报：uname -m、macOS 版本、python / torch / pygame / numpy 版本、demo_check 每一项的秒数、FAIL 项（若有）。
+最后在后台启动 `python -m snake_rl.gui.app --player runs/dqn_B8_W10_gamma099/0 --cell 72`，
+告诉我窗口叫什么、怎么操作（先点窗口取得焦点，Space 开跑，`=` 加速，Q 退出），然后停下等我确认。
+```
+
+若演示包已挂成 GitHub Release，把提示词里"演示包在 ~/Downloads/demo_pack.zip"一句换成：
+"先 `curl -L -o ~/Downloads/demo_pack.zip <Release 资产的 URL>` 下载演示包（115 MB）"。
+
+### 10.3 Claude Code 汇报之后，人再做
+
+- 点一下它开的窗口，按 Space / `=` / Q，确认键盘能用（§3 第 11 步）。
+- 按 §4 接投影设置，按 §6 排练两遍。
+- 若它报告某项 FAIL 且 §7 没覆盖，把它的汇报原文发回训练机这边的会话。
