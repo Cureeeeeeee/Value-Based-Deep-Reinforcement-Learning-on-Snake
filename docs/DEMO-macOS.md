@@ -53,8 +53,14 @@ python scripts/make_demo_pack.py          # -> runs/export/demo_pack.zip
 | `runs/figures/partD_*` | Part D 截图（GUI 开不出来时的替身） | 0.2 MB |
 | `runs/baselines/*.json` | 基线评估结果 | 0.1 MB |
 
-传到 Mac：U 盘（exFAT 格式两边都能读）、OneDrive / Google Drive / iCloud 网页版、或局域网 AirDrop 不行（Windows 没有）。
-一起带上的预案文件见 §7。
+传到 Mac：同一个文件已挂在仓库的 GitHub Release `demo-pack-2026-11-02` 上，Mac 上直接下载（公开仓库，不需登录）：
+
+```zsh
+curl -L -o ~/Downloads/demo_pack.zip https://github.com/Cureeeeeeee/Value-Based-Deep-Reinforcement-Learning-on-Snake/releases/download/demo-pack-2026-11-02/demo_pack.zip
+shasum -a 256 ~/Downloads/demo_pack.zip     # f0dc432887ef43b26f18f99e04412d759cfc853fee714ec6c50c29f99154f8fb
+```
+
+备选：U 盘（exFAT 两边都能读）或网盘。一起带上的预案文件见 §7。
 
 ## 3. 在 Mac 上安装（Apple Silicon）
 
@@ -286,8 +292,8 @@ head -30 runs/report/index.md                                                   
 2. 装 Homebrew（会要开机密码）：`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`，
    按它结尾的提示把 `brew shellenv` 那行加进 `~/.zprofile`，重开终端；然后 `brew install python@3.12`。
    不想装 Homebrew 就用 python.org 的 3.12 安装器（§3 第 3 步方案 B）。
-3. 把 `demo_pack.zip` 放到 `~/Downloads/`（U 盘 / 网盘；若已挂成 GitHub Release，Claude Code 可以自己 `curl` 下载，见提示词）。
-   校验：`shasum -a 256 ~/Downloads/demo_pack.zip` 应为 `f0dc432887ef43b26f18f99e04412d759cfc853fee714ec6c50c29f99154f8fb`（115,325,347 字节，2026-11-02 版）。
+3. 演示包不用手动搬：提示词让 Claude Code 自己从 GitHub Release 下载（115 MB，`curl`）。没有网络时才用 U 盘放到 `~/Downloads/demo_pack.zip`。
+   校验值：`f0dc432887ef43b26f18f99e04412d759cfc853fee714ec6c50c29f99154f8fb`（115,325,347 字节，2026-11-02 版）。
 4. 把预案文件也放进 `~/Downloads/`：预录视频 mp4、Part E 的 PDF。
 5. 克隆仓库并在仓库目录里启动 Claude Code：
    ```zsh
@@ -306,9 +312,11 @@ head -30 runs/report/index.md                                                   
 - 不装 CUDA 版 torch，不用 --index-url；`pip install -e .` 从 PyPI 装即可。不要运行 scripts/check_env.py（它检查 CUDA，在 Mac 上按设计失败）。
 - 先 `uname -m`。若是 x86_64（Intel），停下来告诉我，按文档 §8 之前先问我要不要继续。
 - 用 python3.12 建 .venv（`python3.12 -m venv .venv`）；系统自带的 python3 是 3.9，不能用；也不要用 3.14。
-- 演示包在 ~/Downloads/demo_pack.zip，先 `shasum -a 256` 核对
-  f0dc432887ef43b26f18f99e04412d759cfc853fee714ec6c50c29f99154f8fb，再 `unzip ~/Downloads/demo_pack.zip -d ~/snake-rl`，
-  解完 `ls runs` 应有 8 个目录（baselines behaviour dqn_A_W10 dqn_B8_W10_gamma099 export figures report tabular_q_W10）。
+- 演示包：若 ~/Downloads/demo_pack.zip 不存在，先下载
+  `curl -L -o ~/Downloads/demo_pack.zip https://github.com/Cureeeeeeee/Value-Based-Deep-Reinforcement-Learning-on-Snake/releases/download/demo-pack-2026-11-02/demo_pack.zip`（115 MB）；
+  然后 `shasum -a 256` 核对 f0dc432887ef43b26f18f99e04412d759cfc853fee714ec6c50c29f99154f8fb，
+  再 `unzip ~/Downloads/demo_pack.zip -d ~/snake-rl`，解完 `ls runs` 应有 8 个目录
+  （baselines behaviour dqn_A_W10 dqn_B8_W10_gamma099 export figures report tabular_q_W10）。
 - 不改 snake_rl/ 和 scripts/ 下的代码，不训练（demo_check 自带的 smoke 训练除外），不 commit，不 push；
   不跑全量 pytest，只跑 `pytest -q tests/test_gui.py`。
 - 任一步失败：把命令和输出的最后 20 行原样给我，对照文档 §7 的预案表处理；不要为了让检查通过而改代码或改测试。
@@ -317,9 +325,6 @@ head -30 runs/report/index.md                                                   
 最后在后台启动 `python -m snake_rl.gui.app --player runs/dqn_B8_W10_gamma099/0 --cell 72`，
 告诉我窗口叫什么、怎么操作（先点窗口取得焦点，Space 开跑，`=` 加速，Q 退出），然后停下等我确认。
 ```
-
-若演示包已挂成 GitHub Release，把提示词里"演示包在 ~/Downloads/demo_pack.zip"一句换成：
-"先 `curl -L -o ~/Downloads/demo_pack.zip <Release 资产的 URL>` 下载演示包（115 MB）"。
 
 ### 10.3 Claude Code 汇报之后，人再做
 

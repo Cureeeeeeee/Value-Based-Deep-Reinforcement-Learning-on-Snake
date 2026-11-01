@@ -205,8 +205,8 @@ python -m snake_rl.gui.app --player runs/dqn_B8_W10_gamma099/0 --cell 72
 
 ## 4. 演示前待办（用户）
 
-1. **Colab 实跑一次** `notebooks/results.ipynb`（Run all；上传 `runs/export/runs_logs.zip` 或设 `LOGS_URL`）。
-   若 Part E 还能改，去掉 §5.3 / §7.3 / 附录 A 三处 "not yet on Colab"；若已提交，至少现场能打开跑过的 Colab 页。
+1. ~~Colab 实跑一次~~ 已做：2026-10-27 在 Colab 上 Run all 成功（执行版 `notebooks/executed/results_colab.ipynb`，48 格无错误）。
+   剩下的：若 Part E 还能改，去掉 §5.3 / §7.3 / 附录 A 三处 "not yet on Colab" 并重建 docx；现场把那个 Colab 页面留在浏览器标签里，被问到就能打开。
 2. 查 Canvas 提交页：视频命名、时长、上传位置、现场演示的时长与日期（本仓库没有记录）。
 3. 录 §1.3 的 clip，配音，导出 mp4，核时长 ≤ 5:00。
 4. 定三人分工（§1.4 是建议），各自过一遍 §3。

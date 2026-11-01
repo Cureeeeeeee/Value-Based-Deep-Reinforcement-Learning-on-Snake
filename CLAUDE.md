@@ -39,6 +39,12 @@ UTS 43008 Reinforcement Learning（Spring 2026）Assignment 3 团队项目，项
 - 跑测试：`pytest -q`。跑冒烟：`python -m snake_rl.train --config configs/smoke_8x8.yaml`（M5 后存在）。
 - 长时间训练（>10 分钟）不要在 Claude Code 的前台跑：生成命令，让用户在独立终端后台跑，之后只读 `runs/` 分析。
 
+## 演示机（macOS 笔记本，不是训练机）
+
+- 本仓库会被克隆到一台没有 CUDA 的 Mac 上做现场演示（Part F）。在那台机器上，"硬件与环境"的 CUDA 要求不适用：torch 由 `pip install -e .` 直接从 PyPI 装，不用 cu128 索引；不运行 `scripts/check_env.py`（它按设计要求看到 CUDA）；Python 用 3.12（系统自带 3.9 太旧）。
+- 演示机上的唯一目标是 `docs/DEMO-macOS.md`：装好环境、解开演示包（GitHub Release `demo-pack-2026-11-02` 的 `demo_pack.zip`，sha256 见该文档 §10）、`python scripts/demo_check.py` 打印 `11 / 11 passed`、开真窗口给用户看。不改代码、不训练（自检自带的 smoke 训练除外）、不 commit、不 push、不跑全量 `pytest`（只跑 `tests/test_gui.py`）。
+- 任何一步失败：原样报告命令与输出的最后几行，对照 `docs/DEMO-macOS.md` §7 的预案；不要为了让检查通过而改代码或测试。
+
 ## 工作流
 
 1. 会话开始：读 `docs/PROGRESS.md`，确认当前里程碑；`git status` 干净再动手。
